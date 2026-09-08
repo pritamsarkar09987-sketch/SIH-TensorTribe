@@ -1,6 +1,19 @@
+import { useState } from "react";
 import "./App.css";
+import Register from "./pages/register";
+import Login from "./pages/login";
 
 function App() {
+      const [page, setPage] = useState("register");
+  const [loggedIn, setLoggedIn] = useState(false);
+
+  if (page === "register" && !loggedIn) {
+    return <Register onLogin={() => setPage("login")} />;
+  }
+
+  if (page === "login" && !loggedIn) {
+    return <Login onLogin={() => setLoggedIn(true)} />;
+  }
   return (
     <div className="app">
 

@@ -335,3 +335,128 @@ nav {
     grid-template-columns: 1fr;
   }
 }
+/* LOGIN PAGE */
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #111827;
+}
+
+.login-card {
+  width: 400px;
+  background: white;
+  padding: 40px;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.login-logo {
+  width: 55px;
+  height: 55px;
+  margin: 0 auto 20px;
+  border-radius: 50%;
+  background: #111827;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+}
+
+.login-card h1 {
+  text-align: center;
+  margin-bottom: 8px;
+  font-size: 26px;
+  color:black
+}
+
+.login-card > p {
+  text-align: center;
+  color: #020303;
+  margin-bottom: 30px;
+}
+
+.input-group {
+  margin-bottom: 20px;
+}
+
+.input-group label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.input-group input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+}
+
+.input-group input:focus {
+  border-color: #374151;
+}
+
+.login-button {
+  width: 100%;
+  padding: 13px;
+  border: none;
+  border-radius: 8px;
+  background: #111827;
+  color: rgb(229, 217, 217), 217);
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.login-button:hover {
+  background: #1f2937;
+}
+
+.login-footer {
+  margin-top: 25px;
+  font-size: 12px;
+}
+
+/* your existing CSS */
+/* dashboard styles */
+/* login styles */
+
+/* NEW SIGNUP CSS — paste below everything */
+.login-card {
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.input-group select {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  background: white;
+}
+.switch-page {
+  text-align: center;
+  margin-top: 18px;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.switch-page button {
+  border: none;
+  background: none;
+  color: #111827;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 0;
+}
+
+.switch-page button:hover {
+  text-decoration: underline;
+}
