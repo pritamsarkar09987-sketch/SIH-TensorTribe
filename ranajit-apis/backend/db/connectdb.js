@@ -4,21 +4,46 @@ dotenv.config();
 
 const { Pool } = pg;
 
-export const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT || 5432,
-});
+const isCloudHost = (host) => {
+  if (!host) return false;
+  return host !== "localhost" && host !== "127.0.0.1" && host !== "::1";
+};
+
+const poolConfig = process.env.DATABASE_URL
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DB_SSL === "false" ? false : { rejectUnauthorized: false },
+    }
+  : {
+      user: process.env.DB_USER,
+      host: process.env.DB_HOST,
+      database: process.env.DB_NAME || "postgres",
+      password: process.env.DB_PASSWORD,
+      port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432,
+      ssl:
+        process.env.DB_SSL === "true" || isCloudHost(process.env.DB_HOST)
+          ? { rejectUnauthorized: false }
+          : false,
+    };
+
+export const pool = new Pool(poolConfig);
 
 const connectDB = async () => {
   try {
     const client = await pool.connect();
-    console.log("PostgreSQL connected successfully!");
+    const res = await client.query("SELECT current_database(), current_user;");
+    const dbInfo = res.rows[0];
+    console.log(
+      `PostgreSQL connected successfully! (Database: ${dbInfo.current_database}, User: ${dbInfo.current_user})`
+    );
     client.release();
   } catch (error) {
     console.error("PostgreSQL connection error:", error.message);
+    if (error.message.includes('database "ibvap" does not exist')) {
+      console.error(
+        "Hint: In cloud providers like Supabase or Neon, the default database is usually 'postgres' or 'neondb'. Set DB_NAME=postgres in your .env file."
+      );
+    }
     process.exit(1);
   }
 };

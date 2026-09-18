@@ -5,26 +5,33 @@ import {
   getCameraByIdController,
   getCamerasController,
   updateCameraController,
+  deleteCameraController,
+  activateCameraController,
+  uploadVideoCameraController,
+  videoUploadMiddleware,
 } from "../controller/camera.controller.js";
 
 const cameraRouter = express.Router();
 
+// Video upload endpoint (supports .mp4, .avi, .mkv, .mov files)
+cameraRouter.post("/upload", videoUploadMiddleware.single("video"), uploadVideoCameraController);
+
+cameraRouter.post("/", createCameraController);
 cameraRouter.post("/addCamera", createCameraController);
-cameraRouter.get("/getAllCamera", protectRoute, getCamerasController);
-cameraRouter.get(
-  "/getCameraById/:cameraId",
-  protectRoute,
-  getCameraByIdController,
-);
-cameraRouter.patch(
-  "/updateCamera/:cameraId",
-  protectRoute,
-  updateCameraController,
-);
-cameraRouter.delete(
-  "/deleteCamera/:cameraId",
-  protectRoute,
-  getCameraByIdController,
-);
+
+cameraRouter.post("/:cameraId/activate", activateCameraController);
+cameraRouter.post("/activateCamera/:cameraId", activateCameraController);
+
+cameraRouter.get("/", getCamerasController);
+cameraRouter.get("/getAllCamera", getCamerasController);
+
+cameraRouter.get("/:cameraId", getCameraByIdController);
+cameraRouter.get("/getCameraById/:cameraId", getCameraByIdController);
+
+cameraRouter.patch("/:cameraId", protectRoute, updateCameraController);
+cameraRouter.patch("/updateCamera/:cameraId", protectRoute, updateCameraController);
+
+cameraRouter.delete("/:cameraId", protectRoute, deleteCameraController);
+cameraRouter.delete("/deleteCamera/:cameraId", protectRoute, deleteCameraController);
 
 export default cameraRouter;

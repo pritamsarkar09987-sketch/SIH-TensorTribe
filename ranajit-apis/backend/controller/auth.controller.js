@@ -4,7 +4,7 @@ import generateTokenAndSetCookie from "../utils/generateToken.js";
 
 export const signupController = async (req, res) => {
   try {
-    const { fullname, email, password, confirmPassword, gender } = req.body;
+    const { fullname, email, password, confirmPassword, gender, rank } = req.body;
 
     if (!fullname || !email || !password || !confirmPassword || !gender) {
       return res.status(400).json({
@@ -36,9 +36,7 @@ export const signupController = async (req, res) => {
 
     // Profile picture
     const boyProfilePic = `https://avatarapi.runflare.run/public/boy?usearname=[${fullname}]`;
-
     const girlProfilePic = `https://avatarapi.runflare.run/public/girl?usearname=[${fullname}]`;
-
     const generalProfilePic = `https://avatarapi.runflare.run/public?usearname=[${fullname}]`;
 
     const profilePic =
@@ -48,18 +46,21 @@ export const signupController = async (req, res) => {
           ? girlProfilePic
           : generalProfilePic;
 
+    const userRank = rank || "Captain";
+
     // Create user
     const result = await pool.query(
       `INSERT INTO users
-        (fullname, email, password, gender, profile_pic)
-       VALUES ($1, $2, $3, $4, $5)
+        (fullname, email, password, gender, profile_pic, rank)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING
         id,
         fullname,
         email,
         gender,
+        rank,
         profile_pic`,
-      [fullname, email, hashedPassword, gender, profilePic],
+      [fullname, email, hashedPassword, gender, profilePic, userRank],
     );
 
     const newUser = result.rows[0];
@@ -71,6 +72,7 @@ export const signupController = async (req, res) => {
       _id: newUser.id,
       fullname: newUser.fullname,
       email: newUser.email,
+      rank: newUser.rank || userRank,
       profilePic: newUser.profile_pic,
       gender: newUser.gender,
       message: "Signup successfully",
@@ -102,6 +104,7 @@ export const loginController = async (req, res) => {
         email,
         password,
         gender,
+        rank,
         profile_pic
        FROM users
        WHERE email = $1`,
@@ -132,6 +135,7 @@ export const loginController = async (req, res) => {
       _id: user.id,
       fullname: user.fullname,
       email: user.email,
+      rank: user.rank || "Captain",
       profilePic: user.profile_pic,
       gender: user.gender,
       message: "Logged in successfully",
@@ -142,6 +146,27 @@ export const loginController = async (req, res) => {
     return res.status(500).json({
       error: "Internal server error.",
     });
+  }
+};
+
+export const getMeController = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    return res.status(200).json({
+      _id: user.id,
+      fullname: user.fullname,
+      email: user.email,
+      rank: user.rank || "Captain",
+      gender: user.gender,
+      profilePic: user.profile_pic,
+      role: user.role,
+    });
+  } catch (error) {
+    console.log("Error in getMeController:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 };
 
