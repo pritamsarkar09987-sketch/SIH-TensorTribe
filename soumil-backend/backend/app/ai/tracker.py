@@ -43,8 +43,16 @@ class Tracker:
 
         tracked_objects = []
 
-        # If nothing is tracked yet (e.g. very first frame), boxes.id can be None.
+        # If nothing is tracked with persistent ID yet, fall back to detections with synthetic IDs
         if result.boxes.id is None:
+            for idx, box in enumerate(result.boxes):
+                confidence = float(box.conf[0])
+                if confidence < self.confidence_threshold:
+                    continue
+                class_id = int(box.cls[0])
+                class_name = self.model.names[class_id]
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                tracked_objects.append(TrackedObject(idx + 1, class_name, confidence, (x1, y1, x2, y2)))
             return tracked_objects
 
         for box in result.boxes:

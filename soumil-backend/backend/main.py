@@ -1,8 +1,12 @@
+import os
+# Configure OpenCV FFMPEG RTSP options globally before importing cv2
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;4000000|buffer_size;1024000"
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.camera_api import router as camera_router, start_camera
+from app.api.camera_api import router as camera_router
 
-app = FastAPI(title="IBVAP AI Backend")
+app = FastAPI(title="IVVP AI Computer Vision Engine")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,18 +21,15 @@ app.include_router(camera_router)
 
 @app.on_event("startup")
 def startup_event():
-    try:
-        start_camera("CAM-01")
-        print("[AI Backend] Successfully auto-started CAM-01 tactical pipeline")
-    except Exception as e:
-        print(f"[AI Backend] Camera startup status: {e}")
+    print("[IVVP AI Engine] Computer Vision service initialized with +10M Perimeter ROI and Email Alerting.")
 
 
 @app.get("/")
 def home():
     return {
-        "service": "IBVAP AI Engine",
+        "service": "IVVP AI Computer Vision Engine",
         "status": "online",
-        "ingest_target": "http://localhost:8080/ingest",
-        "database_api": "http://localhost:5000/api"
+        "ingest_target": "http://localhost:5000/ingest",
+        "database_api": "http://localhost:5000/api",
+        "roi_perimeter": "+10-Meter Restricted Yellow Bracket",
     }

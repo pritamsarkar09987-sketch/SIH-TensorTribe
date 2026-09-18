@@ -1,10 +1,12 @@
 """
-Camera API
-----------
-REST endpoints for registering, listing, starting, and stopping cameras.
-Delegates all real work to CameraManager and CameraWorker.
+Camera API (Dynamic RTSP Ingestion & AI Pipeline Lifecycle)
+------------------------------------------------------------
+REST endpoints for dynamically registering RTSP links, starting ingestion,
+and streaming AI-analyzed video feeds to the consolidated Node.js /ingest endpoint.
 """
 
+import os
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -16,29 +18,145 @@ from app.events.event_manager import EventManager
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
-# Single shared instances for the whole app (for now — simple is fine at this stage).
 camera_manager = CameraManager()
 workers: dict[str, CameraWorker] = {}
 pipelines: dict[str, DetectionPipeline] = {}
-
-# One shared EventManager for the whole app - all cameras' events
-# go into this single collector (each Event already has camera_id).
 event_manager = EventManager()
 
-# Shared test zone for now - per-camera zones come later via a
-# future zone_api.py.
-default_zone = Zone("ZONE-1", points=[(500, 400), (1280, 400), (1280, 720), (500, 720)])
+# Default static +10-meter perimeter yellow bracket zone
+default_zone = Zone("+10M-PERIMETER", points=[(220, 360), (1060, 360), (1220, 680), (60, 680)])
 
-# Register default camera CAM-01
-try:
-    camera_manager.add_camera(
-        camera_id="CAM-01",
-        name="Border Sector North - Cam 1",
-        source="videos/test.mp4",
-        type="file"
+
+class DynamicIngestRequest(BaseModel):
+    camera_id: str = "CAM-DYNAMIC"
+    camera_name: str = "Tactical Perimeter Cam"
+    rtsp_link: str
+    user_id: int | None = None
+    user_email: str = "operator@ibvap.mil"
+    user_name: str = "Tactical Officer"
+    user_rank: str = "Captain"
+
+
+def resolve_source_path(source: str) -> tuple[str, str]:
+    """
+    Sanitizes source URL or resolves local video path.
+    Returns (resolved_source, source_type).
+    """
+    s = source.strip().strip('"\'')
+
+    # Sanitize accidental "ip:" typos, e.g. rtsp://ip:100.98.7.93:8080/...
+    for prefix in ["rtsp://ip:", "rtsps://ip:", "http://ip:", "https://ip:"]:
+        if s.startswith(prefix):
+            s = prefix.replace("ip:", "") + s[len(prefix):]
+
+    # Check for live stream protocols or webcam digit
+    if s.startswith("rtsp://") or s.startswith("rtsps://") or s.startswith("http://") or s.startswith("https://") or s.isdigit():
+        return s, "rtsp"
+
+    # If it is an existing absolute path:
+    if os.path.isabs(s) and os.path.exists(s):
+        return s, "file"
+
+    # Search potential relative directories across the repository
+    cur_file = Path(__file__).resolve()
+    backend_dir = cur_file.parents[2]  # soumil-backend/backend
+    workspace_root = cur_file.parents[4]  # SIH-TensorTribe workspace root
+
+    clean_name = Path(s).name
+    candidates = [
+        Path(s),
+        workspace_root / s,
+        workspace_root / "uploads" / clean_name,
+        workspace_root / "videos" / clean_name,
+        backend_dir / s,
+        backend_dir / "videos" / clean_name,
+        backend_dir / "uploads" / clean_name,
+    ]
+
+    for cand in candidates:
+        try:
+            if cand.exists():
+                return str(cand.resolve()), "file"
+        except Exception:
+            pass
+
+    return s, "file"
+
+
+@router.post("/ingest_dynamic")
+def ingest_dynamic(payload: DynamicIngestRequest):
+    """
+    Dynamically switches or starts RTSP camera ingestion with the +10m yellow bracket
+    and active email intrusion alerting linked to the user's account.
+    """
+    global workers, pipelines
+
+    # Stop all existing active pipelines and workers to avoid duplicate load
+    for cid in list(pipelines.keys()):
+        try:
+            pipelines[cid].stop()
+        except Exception as e:
+            print(f"[Dynamic Ingest] Pipeline stop notice: {e}")
+        del pipelines[cid]
+
+    for cid in list(workers.keys()):
+        try:
+            workers[cid].stop()
+        except Exception as e:
+            print(f"[Dynamic Ingest] Worker stop notice: {e}")
+        del workers[cid]
+
+    source, source_type = resolve_source_path(payload.rtsp_link)
+    camera_id = payload.camera_id or "CAM-LIVE"
+
+    # Register/update in camera manager
+    try:
+        camera_manager.add_camera(
+            camera_id=camera_id,
+            name=payload.camera_name,
+            source=source,
+            type=source_type,
+        )
+    except Exception:
+        camera_manager.update_status(camera_id, "running")
+
+    # Start camera worker
+    worker = CameraWorker(
+        camera_id=camera_id,
+        source=source,
+        camera_manager=camera_manager,
+        source_type=source_type,
     )
-except Exception:
-    pass
+
+    worker.start()
+    workers[camera_id] = worker
+
+    # Start detection pipeline streaming to Node.js /ingest
+    pipeline = DetectionPipeline(
+        camera_id=camera_id,
+        camera_worker=worker,
+        event_manager=event_manager,
+        zone=default_zone,
+        camera_name=payload.camera_name,
+        user_id=payload.user_id,
+        user_email=payload.user_email,
+        user_name=payload.user_name,
+        user_rank=payload.user_rank,
+        broadcaster_url="http://localhost:5000/ingest",
+        api_alert_url="http://localhost:5000/api/alert",
+    )
+    pipeline.start()
+    pipelines[camera_id] = pipeline
+
+    return {
+        "status": "success",
+        "message": f"Live dynamic ingestion online for '{payload.camera_name}'",
+        "camera_id": camera_id,
+        "source": source,
+        "source_type": source_type,
+        "officer_in_charge": f"{payload.user_rank} {payload.user_name}",
+        "alert_email": payload.user_email,
+    }
 
 
 class AddCameraRequest(BaseModel):
@@ -82,10 +200,8 @@ def start_camera(camera_id: str):
         raise HTTPException(status_code=404, detail="Camera not found")
 
     if camera_id in workers:
-        raise HTTPException(status_code=400, detail="Camera already started")
+        return {"message": f"{camera_id} already running"}
 
-    # Now correctly passes source_type - previously always defaulted
-    # to "file", so RTSP reconnect logic never actually engaged here.
     worker = CameraWorker(
         camera_id=camera_id,
         source=camera.source,
@@ -104,6 +220,9 @@ def start_camera(camera_id: str):
         camera_worker=worker,
         event_manager=event_manager,
         zone=default_zone,
+        camera_name=camera.name,
+        broadcaster_url="http://localhost:5000/ingest",
+        api_alert_url="http://localhost:5000/api/alert",
     )
     pipeline.start()
     pipelines[camera_id] = pipeline
@@ -115,7 +234,7 @@ def start_camera(camera_id: str):
 def stop_camera(camera_id: str):
     worker = workers.get(camera_id)
     if worker is None:
-        raise HTTPException(status_code=400, detail="Camera is not running")
+        return {"message": f"{camera_id} is not running"}
 
     pipeline = pipelines.get(camera_id)
     if pipeline is not None:
