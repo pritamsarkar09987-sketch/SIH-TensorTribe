@@ -1,11 +1,12 @@
 import { useState } from "react";
 
-function Login({ onLogin }) {
+function Login({ onLogin, onRegister }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const apiBase = window.location.port === "5173" ? "http://localhost:5000" : "";
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
@@ -13,7 +14,7 @@ function Login({ onLogin }) {
     setErrorMsg("");
 
     try {
-      const res = await fetch("http://localhost:5000/api/auth/login", {
+      const res = await fetch(`${apiBase}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -22,89 +23,107 @@ function Login({ onLogin }) {
 
       const data = await res.json();
       if (res.ok) {
-        onLogin(data.fullname || "Operator");
+        onLogin({
+          id: data._id || data.id,
+          fullname: data.fullname || "Tactical Operator",
+          email: data.email || email,
+          rank: data.rank || "Captain",
+          isDemo: false,
+        });
       } else {
-        setErrorMsg(data.error || "Login failed");
+        setErrorMsg(data.error || "Authentication failed. Check credentials or use Quick Demo Access.");
       }
     } catch (err) {
-      console.warn("Backend API unavailable, using local demo bypass:", err);
-      onLogin("Tactical Operator");
+      console.warn("Backend API unavailable:", err);
+      setErrorMsg("Node.js API offline. Use Quick Demo Access below to bypass.");
     } finally {
       setLoading(false);
     }
   };
 
   const handleDemoLogin = () => {
-    onLogin("Major General (Admin)");
+    onLogin({
+      id: 999999,
+      fullname: "Major General Vikram Singh",
+      email: "demo.operator@ibvap.mil",
+      rank: "Major General",
+      isDemo: true,
+    });
   };
 
   return (
     <div className="login-page">
       <div className="login-card">
-
-        <div className="login-logo">
-          🛡️
+        <div className="login-header">
+          <div className="login-logo">
+            🛡️
+          </div>
+          <h1>IVVP Command Center</h1>
+          <p className="login-subtitle">Intelligent Border Video Analytics Platform</p>
+          <div className="login-badge">AUTHORIZED PERSONNEL ONLY • DEFCON 2</div>
         </div>
 
-        <h1>Welcome Back</h1>
-        <p>Login to BorderWatch</p>
-
-        <form onSubmit={handleSubmit}>
-
+        <form onSubmit={handleSubmit} className="auth-form" noValidate={false}>
           <div className="input-group">
-            <label>Email</label>
-
+            <label htmlFor="login-email">Military / Operator Email</label>
             <input
+              id="login-email"
               type="email"
-              placeholder="Enter your email"
+              placeholder="e.g. general.admin@ibvap.mil"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              autoComplete="email"
             />
           </div>
 
           <div className="input-group">
-            <label>Password</label>
-
+            <label htmlFor="login-password">Access Passcode</label>
             <input
+              id="login-password"
               type="password"
-              placeholder="Enter your password"
+              placeholder="••••••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              autoComplete="current-password"
             />
           </div>
 
-          {errorMsg && <p style={{ color: "#dc2626", fontSize: "13px", marginBottom: "12px" }}>{errorMsg}</p>}
+          {errorMsg && (
+            <div className="auth-alert error-alert">
+              <span>⚠️</span>
+              <p>{errorMsg}</p>
+            </div>
+          )}
 
           <button type="submit" className="login-button" disabled={loading}>
-            {loading ? "Authenticating..." : "Login"}
+            {loading ? "Verifying Credentials..." : "Authenticate & Enter Command Center"}
           </button>
 
           <button
             type="button"
             onClick={handleDemoLogin}
-            style={{
-              width: "100%",
-              marginTop: "10px",
-              padding: "10px",
-              background: "#1f2937",
-              color: "#34d399",
-              border: "1px dashed #34d399",
-              borderRadius: "8px",
-              cursor: "pointer",
-              fontWeight: "bold",
-              fontSize: "13px"
-            }}
+            className="demo-button"
           >
-            ⚡ Quick Demo Access (Bypass)
+            ⚡ Quick Demo Access (Bypass Login)
           </button>
+
+          <div className="switch-page">
+            <span>New Tactical Operator? </span>
+            <button
+              type="button"
+              className="link-button"
+              onClick={onRegister}
+            >
+              Register / Create Account
+            </button>
+          </div>
         </form>
 
-        <p className="login-footer">
-          Authorized personnel only
-        </p>
-
+        <div className="login-footer">
+          <span>Decoupled Military Surveillance • TensorTribe IVVP</span>
+        </div>
       </div>
     </div>
   );
