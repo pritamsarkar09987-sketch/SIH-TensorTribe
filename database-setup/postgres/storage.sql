@@ -9,22 +9,28 @@ CREATE TYPE user_role AS ENUM ('admin', 'operator');
 
 
 CREATE TABLE users (
-    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    username VARCHAR(50) UNIQUE NOT NULL,
+    id SERIAL PRIMARY KEY,
+    fullname VARCHAR(100) NOT NULL,
     email VARCHAR(100) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    role user_role DEFAULT 'operator',         
+    password VARCHAR(255) NOT NULL,
+    gender VARCHAR(20),
+    rank VARCHAR(100) DEFAULT 'Captain',
+    profile_pic TEXT,
+    role VARCHAR(20) DEFAULT 'operator',         
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create a new table 'cameras' with a primary key and columns
-CREATE TABLE cameras (
-    camera_id VARCHAR(50) PRIMARY KEY,
-    camera_name TEXT NOT NULL CHECK (LENGTH(camera_name) <= 100),
-    location TEXT NOT NULL CHECK (LENGTH(location_name) <= 100),
-    virtual_fence JSONB NOT NULL,--JSONB data type to store the virtual fence coordinates in a flexible format
-    rtsp_url TEXT NOT NULL CHECK (LENGTH(rtsp_url) <= 500),
-    status_cam VARCHAR(20) DEFAULT 'online'
+-- Dynamic User-Linked Cameras
+CREATE TABLE IF NOT EXISTS user_cameras (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    camera_name VARCHAR(100) NOT NULL DEFAULT 'Tactical Perimeter Cam',
+    rtsp_link TEXT NOT NULL,
+    location VARCHAR(100) DEFAULT 'Perimeter Point',
+    status VARCHAR(20) DEFAULT 'online',
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create a new table 'intrusion_alerts' with a primary key and columns

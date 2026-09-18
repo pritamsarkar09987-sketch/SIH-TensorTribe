@@ -1,19 +1,35 @@
-﻿-- IBVAP Database Schema Initialization
+-- IBVAP Database Schema Initialization
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Users Table
+-- Users Table (with Rank)
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     fullname VARCHAR(100) NOT NULL,
     email VARCHAR(100) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
     gender VARCHAR(20),
+    rank VARCHAR(100) DEFAULT 'Captain',
     profile_pic TEXT,
     role VARCHAR(20) DEFAULT 'operator',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Cameras Table
+-- Dynamic User-Linked Cameras Table
+CREATE TABLE IF NOT EXISTS user_cameras (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    camera_name VARCHAR(100) NOT NULL DEFAULT 'Tactical Perimeter Cam',
+    rtsp_link TEXT NOT NULL,
+    location VARCHAR(100) DEFAULT 'Perimeter Point',
+    status VARCHAR(20) DEFAULT 'online',
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_cameras_user_id ON user_cameras(user_id);
+
+-- Legacy Cameras Table (optional fallback)
 CREATE TABLE IF NOT EXISTS cameras (
     id SERIAL PRIMARY KEY,
     camera_id VARCHAR(50) UNIQUE DEFAULT ('CAM-' || substring(gen_random_uuid()::text, 1, 8)),
@@ -30,6 +46,7 @@ CREATE TABLE IF NOT EXISTS cameras (
 CREATE TABLE IF NOT EXISTS alerts (
     alert_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     camera_id VARCHAR(50) NOT NULL,
+    user_id INTEGER,
     event_timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     object_type VARCHAR(50) NOT NULL,
     tracking_id INTEGER NOT NULL DEFAULT 1,
@@ -42,15 +59,8 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(event_timestamp, camera_id);
+CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id);
 
 -- Compatibility view for intrusion_alerts
 CREATE OR REPLACE VIEW intrusion_alerts AS SELECT * FROM alerts;
 
--- Seed initial test cameras if none exist
-INSERT INTO cameras (camera_name, location, rtsp_url, status)
-VALUES 
-  ('Border Sector North - Cam 1', 'Northern Perimeter Post A', 'videos/test.mp4', 'online'),
-  ('Border Sector West - Cam 2', 'Western Gate Bunker 3', 'rtsp://mock/stream2', 'online'),
-  ('Command Outpost East - Cam 3', 'East Tower Watch', 'rtsp://mock/stream3', 'online'),
-  ('Southern Buffer Zone - Cam 4', 'Sector 4 Barricade', 'rtsp://mock/stream4', 'offline')
-ON CONFLICT (rtsp_url) DO NOTHING;

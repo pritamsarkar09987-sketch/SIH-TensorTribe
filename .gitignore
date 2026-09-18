@@ -245,3 +245,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Uploaded dynamic surveillance videos
+uploads/*
+!uploads/.gitkeep
