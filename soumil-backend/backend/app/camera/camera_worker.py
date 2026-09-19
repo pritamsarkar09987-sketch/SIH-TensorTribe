@@ -14,18 +14,19 @@ Does NOT block main thread. Reconnects automatically in background.
 """
 
 import os
+import socket
 import threading
 import time
-import cv2
+from urllib.parse import urlparse
 
+# Configure OpenCV FFMPEG RTSP options globally before importing cv2
+# Low latency: nobuffer, low_delay, zero max_delay, drop frames if behind, TCP transport
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;3000000|fflags;nobuffer|flags;low_delay|max_delay;500000|framedrop;1"
+
+import cv2
 from app.camera.camera_manager import CameraManager
 
-# Configure OpenCV FFMPEG RTSP options:
-# Force TCP transport (prevents UDP packet loss and Windows firewall drops)
-# stimeout in microseconds: 4000000 = 4 seconds
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;4000000|buffer_size;1024000"
-
-RECONNECT_DELAY_SECONDS = 2.0
+RECONNECT_DELAY_SECONDS = 1.0
 MAX_RECONNECT_ATTEMPTS = 100
 
 
@@ -56,34 +57,57 @@ class CameraWorker:
         self._thread.start()
         print(f"[CameraWorker:{self.camera_id}] Background worker thread started for: {self.source}")
 
+    def _probe_socket(self, url: str) -> tuple[bool, str]:
+        """Fast pre-flight TCP probe (2.0s timeout) to prevent OpenCV 30s hangs on unreachable hosts."""
+        try:
+            parsed = urlparse(url)
+            host = parsed.hostname
+            if not host:
+                return True, ""
+            default_port = 8554 if parsed.scheme in ("rtsp", "rtsps") else (8080 if parsed.scheme in ("http", "https") else 554)
+            port = parsed.port or default_port
+            with socket.create_connection((host, port), timeout=2.0):
+                return True, ""
+        except Exception as e:
+            return False, f"Cannot reach {host}:{port} ({e}). Check phone app & Wi-Fi."
+
     def _open_capture(self) -> bool:
         """Attempts to open the video source with optimal backend and timeouts."""
         try:
             src = self.source.strip()
+            # Normalize IP Webcam URLs (port 8080 without path -> append /video)
+            if src.startswith("http://") or src.startswith("https://"):
+                try:
+                    parsed = urlparse(src)
+                    if parsed.port == 8080 and parsed.path in ("", "/"):
+                        src = f"{src.rstrip('/')}/video"
+                except Exception:
+                    pass
+
             if src.isdigit():
                 # Built-in or USB webcam index (DirectShow on Windows for instant initialization)
                 cam_backend = cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY
                 self._capture = cv2.VideoCapture(int(src), cam_backend)
-            elif src.startswith("rtsp://") or src.startswith("rtsps://"):
-                # Force FFMPEG backend with TCP transport and explicit OpenCV 5.0 timeout properties
-                params = [
-                    cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 4000,
-                    cv2.CAP_PROP_READ_TIMEOUT_MSEC, 4000,
-                    cv2.CAP_PROP_BUFFERSIZE, 1,
-                ]
-                self._capture = cv2.VideoCapture(src, cv2.CAP_FFMPEG, params)
-            elif src.startswith("http://") or src.startswith("https://"):
-                # HTTP MJPEG / IP Webcam streams
-                params = [
-                    cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 4000,
-                    cv2.CAP_PROP_READ_TIMEOUT_MSEC, 4000,
-                    cv2.CAP_PROP_BUFFERSIZE, 1,
-                ]
-                self._capture = cv2.VideoCapture(src, cv2.CAP_FFMPEG, params)
+            elif src.startswith("rtsp://") or src.startswith("rtsps://") or src.startswith("http://") or src.startswith("https://"):
+                # Fast TCP probe first to avoid OpenCV 30-second hang on offline devices
+                ok, err = self._probe_socket(src)
+                if not ok:
+                    self.last_error = err
+                    print(f"[CameraWorker:{self.camera_id}] Probe failed: {err}")
+                    return False
+
+                # Use FFMPEG backend with TCP transport & low-delay options
+                self._capture = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
+                if self._capture is None or not self._capture.isOpened():
+                    self._capture = cv2.VideoCapture(src)
             else:
                 self._capture = cv2.VideoCapture(src)
 
             if self._capture is not None and self._capture.isOpened():
+                try:
+                    self._capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
                 self.status = "connected"
                 return True
         except Exception as e:
@@ -114,25 +138,34 @@ class CameraWorker:
 
                 if not ret or frame is None:
                     if self.source_type == "file":
-                        # Video file reached end - rewind to frame 0 for continuous live feed
+                        # Video file reached end - rewind or re-open for continuous live feed
                         self._capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         ret_rewind, frame_rewind = self._capture.read()
+                        if not ret_rewind or frame_rewind is None:
+                            # Re-open file capture cleanly if seek failed
+                            try:
+                                self._capture.release()
+                            except Exception:
+                                pass
+                            self._capture = cv2.VideoCapture(self.source)
+                            ret_rewind, frame_rewind = self._capture.read()
+
                         if ret_rewind and frame_rewind is not None:
                             reconnect_attempts = 0
                             self.reconnect_count = 0
                             self.status = "running"
                             with self._lock:
                                 self._latest_frame = frame_rewind
-                            time.sleep(1 / 35)
+                            time.sleep(1 / 30)
                             continue
                         else:
                             time.sleep(0.05)
                             continue
 
-                    # For RTSP / live streams: tolerate brief keyframe gaps (up to ~1.5 seconds)
+                    # For RTSP / live streams: tolerate brief keyframe/network gaps (up to ~2.7 seconds)
                     consecutive_read_failures += 1
-                    if consecutive_read_failures < 25:
-                        time.sleep(0.04)
+                    if consecutive_read_failures < 90:
+                        time.sleep(0.03)
                         continue
 
                     # Stream has genuinely stalled or disconnected
@@ -160,7 +193,11 @@ class CameraWorker:
                 with self._lock:
                     self._latest_frame = frame
 
-                time.sleep(1 / 35)
+                if self.source_type == "file":
+                    time.sleep(1 / 30)
+                else:
+                    # Low latency: minimal sleep to avoid buffering while yielding thread
+                    time.sleep(0.001)
 
             except Exception as e:
                 print(f"[CameraWorker:{self.camera_id}] Read loop error: {e}")
@@ -182,7 +219,7 @@ class CameraWorker:
     def stop(self) -> None:
         """Signal the loop to stop and release the video source."""
         self._running = False
-        if self._thread is not None:
+        if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=1.5)
         if self._capture is not None:
             try:

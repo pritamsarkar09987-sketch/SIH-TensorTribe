@@ -30,15 +30,15 @@ const streamClients = new Set();
 wss.on("connection", (ws, req) => {
   streamClients.add(ws);
   const clientIp = req.socket.remoteAddress;
-  console.log(`[IVVP WebSocket] Dashboard client connected (${clientIp}). Active viewers: ${streamClients.size}`);
+  console.log(`[Netra AI WebSocket] Dashboard client connected (${clientIp}). Active viewers: ${streamClients.size}`);
 
   ws.on("close", () => {
     streamClients.delete(ws);
-    console.log(`[IVVP WebSocket] Dashboard client disconnected. Active viewers: ${streamClients.size}`);
+    console.log(`[Netra AI WebSocket] Dashboard client disconnected. Active viewers: ${streamClients.size}`);
   });
 
   ws.on("error", (err) => {
-    console.warn(`[IVVP WebSocket] Client error: ${err.message}`);
+    console.warn(`[Netra AI WebSocket] Client error: ${err.message}`);
     streamClients.delete(ws);
   });
 });
@@ -46,6 +46,10 @@ wss.on("connection", (ws, req) => {
 const broadcastFrame = (frameBuffer) => {
   for (const client of streamClients) {
     if (client.readyState === WebSocket.OPEN) {
+      // Prevent latency buildup: if client is still receiving previous frame, drop stale frame
+      if (client.bufferedAmount > 64 * 1024) {
+        continue;
+      }
       client.send(frameBuffer, { binary: true });
     }
   }
@@ -91,7 +95,7 @@ app.use("/api/alert", alertRouter);
 app.get("/api/health", (req, res) => {
   return res.status(200).json({
     status: "online",
-    platform: "IVVP Unified Monolith",
+    platform: "Netra AI Unified Platform",
     activeViewers: streamClients.size,
     timestamp: new Date().toISOString(),
   });
@@ -110,7 +114,7 @@ app.use((req, res, next) => {
         res.status(200).send(`
           <html>
             <body style="background:#0c121e;color:#fff;font-family:sans-serif;padding:2rem;">
-              <h2>IVVP Tactical Command Monolith Online</h2>
+              <h2>Netra AI Tactical Command Monolith Online</h2>
               <p>API and WebSocket stream are active on port ${port}.</p>
               <p>Please run <code>npm run build</code> in pritams-frontend to compile the static UI bundle.</p>
             </body>
@@ -128,7 +132,7 @@ app.use((req, res, next) => {
 server.listen(port, async () => {
   await connectDB();
   console.log(`\n==========================================================`);
-  console.log(` IVVP Consolidated Tactical Platform Online!`);
+  console.log(` Netra AI Consolidated Tactical Platform Online!`);
   console.log(` - Single Entry Point:   http://localhost:${port}`);
   console.log(` - REST API Base:        http://localhost:${port}/api`);
   console.log(` - WebSocket Feed:       ws://localhost:${port}/stream`);

@@ -45,7 +45,7 @@ function Login({ onLogin, onRegister }) {
     onLogin({
       id: 999999,
       fullname: "Major General Vikram Singh",
-      email: "demo.operator@ibvap.mil",
+      email: "demo.operator@netra-ai.mil",
       rank: "Major General",
       isDemo: true,
     });
@@ -58,7 +58,7 @@ function Login({ onLogin, onRegister }) {
           <div className="login-logo">
             🛡️
           </div>
-          <h1>IVVP Command Center</h1>
+          <h1>Netra AI Command Center</h1>
           <p className="login-subtitle">Intelligent Border Video Analytics Platform</p>
           <div className="login-badge">AUTHORIZED PERSONNEL ONLY • DEFCON 2</div>
         </div>
@@ -69,7 +69,7 @@ function Login({ onLogin, onRegister }) {
             <input
               id="login-email"
               type="email"
-              placeholder="e.g. general.admin@ibvap.mil"
+              placeholder="e.g. general.admin@netra-ai.mil"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -122,7 +122,7 @@ function Login({ onLogin, onRegister }) {
         </form>
 
         <div className="login-footer">
-          <span>Decoupled Military Surveillance • TensorTribe IVVP</span>
+          <span>Decoupled Military Surveillance • TensorTribe Netra AI</span>
         </div>
       </div>
     </div>

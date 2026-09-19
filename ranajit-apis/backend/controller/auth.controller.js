@@ -114,8 +114,8 @@ export const loginController = async (req, res) => {
     const user = result.rows[0];
 
     if (!user) {
-      return res.status(400).json({
-        error: "Invalid username or password!",
+      return res.status(404).json({
+        error: "Account not registered. Please create an account first.",
       });
     }
 
@@ -124,7 +124,7 @@ export const loginController = async (req, res) => {
 
     if (!isPassword) {
       return res.status(400).json({
-        error: "Invalid username or password!",
+        error: "Incorrect passcode. Please check your password and try again.",
       });
     }
 
@@ -172,9 +172,15 @@ export const getMeController = async (req, res) => {
 
 export const logoutController = (req, res) => {
   try {
-    res.cookie("jwt", "", {
+    const cookieOptions = {
       maxAge: 0,
-    });
+      httpOnly: true,
+      sameSite: "strict",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+    };
+    res.cookie("jwt", "", cookieOptions);
+    res.clearCookie("jwt", cookieOptions);
 
     return res.status(200).json({
       message: "Logged out successfully.",

@@ -1,8 +1,9 @@
 """
-Intrusion detection (+10-Meter Restricted Perimeter Zone)
-----------------------------------------------------------
+Intrusion detection (+8-Meter Restricted Tactical Fence Zone)
+--------------------------------------------------------------
 Checks whether a detected person's bounding box enters or intersects
-with the defined static +10-meter perimeter polygon/bracket.
+with the defined static +8-meter perimeter fence covering the lower
+half of the screen.
 """
 
 import cv2
@@ -10,12 +11,13 @@ import numpy as np
 
 
 class Zone:
-    """A restricted +10m perimeter area, defined as a polygon of (x, y) points."""
+    """A restricted +8m perimeter fence area, defined as a polygon covering the lower half of the screen."""
 
-    def __init__(self, zone_id: str = "+10M-PERIMETER", points: list[tuple[int, int]] = None):
+    def __init__(self, zone_id: str = "+8M-FENCE", points: list[tuple[int, int]] = None):
         self.zone_id = zone_id
-        # Default static +10-meter perimeter bracket (trapezoid across tactical ground plane)
-        self.points = points or [(200, 360), (1080, 360), (1240, 680), (40, 680)]
+        # Entire lower half of screen (1280x720 standardized frame)
+        # From Y=360 (mid-screen) down to Y=720 (bottom edge), covering X=0 to X=1280
+        self.points = points or [(0, 360), (1280, 360), (1280, 720), (0, 720)]
         self._np_points = np.array(self.points, dtype=np.int32)
 
     def contains_point(self, x: float, y: float) -> bool:
@@ -26,19 +28,29 @@ class Zone:
     def intersects_box(self, x1: float, y1: float, x2: float, y2: float) -> bool:
         """
         Returns True if any critical point of the person bounding box is inside
-        the +10m perimeter zone, or if the box intersects the perimeter.
+        the +8m fence zone (lower half of screen), or if the box intersects the fence line.
         """
         # Test key points: feet center, feet left, feet right, center, top center
         test_points = [
-            ((x1 + x2) / 2, y2),        # Feet center (standing position)
-            (x1, y2),                   # Feet bottom-left
-            (x2, y2),                   # Feet bottom-right
+            ((x1 + x2) / 2, y2),            # Feet center (standing position)
+            (x1, y2),                       # Feet bottom-left
+            (x2, y2),                       # Feet bottom-right
             ((x1 + x2) / 2, (y1 + y2) / 2), # Torso center
-            ((x1 + x2) / 2, y1),        # Head / upper boundary
+            ((x1 + x2) / 2, y1),            # Head / upper boundary
         ]
         for px, py in test_points:
             if self.contains_point(px, py):
                 return True
+
+        # Check if bounding box spans across the horizontal fence line (y=360)
+        min_fence_y = min(p[1] for p in self.points)
+        max_fence_y = max(p[1] for p in self.points)
+        min_fence_x = min(p[0] for p in self.points)
+        max_fence_x = max(p[0] for p in self.points)
+
+        if y2 >= min_fence_y and y1 <= max_fence_y and x2 >= min_fence_x and x1 <= max_fence_x:
+            return True
+
         return False
 
 
@@ -50,16 +62,16 @@ class IntrusionDetector:
     def check(self, tracked_objects: list) -> list[int]:
         """
         Given a list of TrackedObject (from Tracker), returns the
-        list of track_ids that are NEWLY inside the +10m perimeter zone.
-        Filters strictly for person detections.
+        list of track_ids that are NEWLY inside the +8m perimeter fence.
+        Strictly filters ONLY for person detections.
         """
         new_intrusions = []
         currently_inside = set()
 
         for obj in tracked_objects:
-            # Threat detection filter: persons & tactical vehicles
+            # Threat detection filter: STRICTLY persons only
             class_name = getattr(obj, "class_name", "person").lower()
-            if class_name not in ["person", "car", "truck", "bus", "motorcycle"]:
+            if class_name != "person":
                 continue
 
             x1, y1, x2, y2 = obj.box

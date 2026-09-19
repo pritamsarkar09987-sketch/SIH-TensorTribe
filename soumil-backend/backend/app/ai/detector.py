@@ -26,15 +26,15 @@ class Detection:
 
 
 class Detector:
-    def __init__(self, model_path: str = "yolov8n.pt", confidence_threshold: float = 0.4):
+    def __init__(self, model_path: str = "yolov8n.pt", confidence_threshold: float = 0.55):
         # Loading the model is slow, so this should happen ONCE,
         # not every time we want to detect something.
         self.model = YOLO(model_path)
         self.confidence_threshold = confidence_threshold
 
     def detect(self, frame) -> list[Detection]:
-        """Run detection on a single frame. Returns a list of Detection objects."""
-        results = self.model(frame, verbose=False)
+        """Run detection on a single frame. Returns a list of Detection objects strictly for persons."""
+        results = self.model(frame, classes=[0], conf=self.confidence_threshold, verbose=False)
         result = results[0]
 
         detections = []
@@ -47,6 +47,8 @@ class Detector:
 
             class_id = int(box.cls[0])
             class_name = self.model.names[class_id]
+            if class_name.lower() != "person":
+                continue
             x1, y1, x2, y2 = box.xyxy[0].tolist()
 
             detections.append(Detection(class_name, confidence, (x1, y1, x2, y2)))

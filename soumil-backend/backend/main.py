@@ -1,12 +1,39 @@
 import os
+from pathlib import Path
+
+# Automatically load .env configuration from ranajit-apis, soumil-backend, or workspace root
+def _load_env_files():
+    base_dir = Path(__file__).resolve().parent
+    candidates = [
+        base_dir / ".env",
+        base_dir.parents[1] / "ranajit-apis" / ".env",
+        base_dir.parents[1] / ".env",
+    ]
+    for env_path in candidates:
+        if env_path.exists():
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k = k.strip()
+                            v = v.strip().strip("\"'")
+                            if k not in os.environ:
+                                os.environ[k] = v
+            except Exception as e:
+                print(f"[Netra AI] Warning reading {env_path}: {e}")
+
+_load_env_files()
+
 # Configure OpenCV FFMPEG RTSP options globally before importing cv2
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;4000000|buffer_size;1024000"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;3000000|fflags;nobuffer|flags;low_delay|max_delay;500000|framedrop;1"
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.camera_api import router as camera_router
 
-app = FastAPI(title="IVVP AI Computer Vision Engine")
+app = FastAPI(title="Netra AI Computer Vision Engine")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,15 +48,15 @@ app.include_router(camera_router)
 
 @app.on_event("startup")
 def startup_event():
-    print("[IVVP AI Engine] Computer Vision service initialized with +10M Perimeter ROI and Email Alerting.")
+    print("[Netra AI Engine] Computer Vision service initialized with +6M Perimeter ROI and Email Alerting.")
 
 
 @app.get("/")
 def home():
     return {
-        "service": "IVVP AI Computer Vision Engine",
+        "service": "Netra AI Computer Vision Engine",
         "status": "online",
         "ingest_target": "http://localhost:5000/ingest",
         "database_api": "http://localhost:5000/api",
-        "roi_perimeter": "+10-Meter Restricted Yellow Bracket",
+        "roi_perimeter": "+6-Meter Restricted Yellow Bracket",
     }

@@ -85,7 +85,7 @@ function Register({ onLogin, onRegisterSuccess }) {
             🛡️
           </div>
           <h1>Create Operator Account</h1>
-          <p className="login-subtitle">Register for IVVP Tactical Border Surveillance</p>
+          <p className="login-subtitle">Register for Netra AI Tactical Border Surveillance</p>
           <div className="login-badge">SECURITY CLEARANCE REGISTRATION</div>
         </div>
 
@@ -130,7 +130,7 @@ function Register({ onLogin, onRegisterSuccess }) {
             <input
               id="reg-email"
               type="email"
-              placeholder="e.g. rajesh.sharma@ibvap.mil"
+              placeholder="e.g. rajesh.sharma@netra-ai.mil"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -213,7 +213,7 @@ function Register({ onLogin, onRegisterSuccess }) {
         </form>
 
         <div className="login-footer">
-          <span>Authorized Military Personnel Only • TensorTribe IVVP</span>
+          <span>Authorized Military Personnel Only • TensorTribe Netra AI</span>
         </div>
       </div>
     </div>

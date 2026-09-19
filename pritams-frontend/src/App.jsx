@@ -1,7 +1,79 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import "./App.css";
 import Register from "./pages/register";
 import Login from "./pages/login";
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("[Netra AI ErrorBoundary caught error]:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          style={{
+            minHeight: "100vh",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "#0c121e",
+            color: "#f8fafc",
+            fontFamily: "system-ui, sans-serif",
+            padding: "24px",
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: "48px", marginBottom: "16px" }}>🛡️</div>
+          <h2 style={{ fontSize: "22px", color: "#f87171", marginBottom: "8px" }}>
+            Tactical Command Center Recovery
+          </h2>
+          <p
+            style={{
+              color: "#94a3b8",
+              maxWidth: "520px",
+              marginBottom: "20px",
+              fontSize: "14px",
+              lineHeight: "1.6",
+            }}
+          >
+            A rendering anomaly was safely intercepted. Surveillance state and backend telemetry remain active.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              window.location.reload();
+            }}
+            style={{
+              background: "#2563eb",
+              color: "#ffffff",
+              border: "none",
+              padding: "10px 24px",
+              borderRadius: "6px",
+              fontWeight: 600,
+              cursor: "pointer",
+              fontSize: "14px",
+            }}
+          >
+            ⚡ Recover & Reload Command Center
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function App() {
   const [page, setPage] = useState("login");
@@ -11,7 +83,7 @@ function App() {
   const [userProfile, setUserProfile] = useState({
     id: null,
     fullname: "Major General Vikram Singh",
-    email: "demo.operator@ibvap.mil",
+    email: "demo.operator@netra-ai.mil",
     rank: "Major General",
     isDemo: false,
   });
@@ -76,18 +148,32 @@ function App() {
 
         ws.onopen = () => {
           if (!active) return;
-          console.log("[IVVP WebSocket] Connected to tactical video stream on", wsUrl);
+          console.log("[Netra AI WebSocket] Connected to tactical video stream on", wsUrl);
           setWsStatus("connected");
+        };
+
+        let pendingBlob = null;
+        let rafId = null;
+
+        const renderLatestFrame = () => {
+          if (pendingBlob) {
+            const url = URL.createObjectURL(pendingBlob);
+            setLiveFrame((prevUrl) => {
+              if (prevUrl) URL.revokeObjectURL(prevUrl);
+              return url;
+            });
+            pendingBlob = null;
+          }
+          rafId = null;
         };
 
         ws.onmessage = (event) => {
           if (!active) return;
           if (event.data instanceof Blob) {
-            const url = URL.createObjectURL(event.data);
-            setLiveFrame((prevUrl) => {
-              if (prevUrl) URL.revokeObjectURL(prevUrl);
-              return url;
-            });
+            pendingBlob = event.data;
+            if (!rafId) {
+              rafId = requestAnimationFrame(renderLatestFrame);
+            }
 
             // FPS Calculation
             frameCountRef.current += 1;
@@ -107,7 +193,7 @@ function App() {
         };
 
         ws.onerror = (err) => {
-          console.warn("[IVVP WebSocket] Error:", err);
+          console.warn("[Netra AI WebSocket] Error:", err);
           ws.close();
         };
       } catch (e) {
@@ -134,6 +220,9 @@ function App() {
     const headers = { "Content-Type": "application/json" };
     if (userProfile.isDemo) headers["x-demo-user"] = "true";
     if (userProfile.id) headers["x-user-id"] = userProfile.id.toString();
+    if (userProfile.email) headers["x-user-email"] = userProfile.email;
+    if (userProfile.fullname) headers["x-user-name"] = userProfile.fullname;
+    if (userProfile.rank) headers["x-user-rank"] = userProfile.rank;
 
     try {
       await fetch(`${apiBase}/api/camera/${cam.id}/activate`, {
@@ -149,6 +238,8 @@ function App() {
 
   // Fetch Cameras & Alerts from PostgreSQL API
   const fetchBackendData = async () => {
+    if (!loggedIn) return;
+    if (!userProfile.isDemo && !userProfile.id) return;
     setSyncing(true);
 
     const headers = {};
@@ -188,10 +279,10 @@ function App() {
       console.warn("Camera fetch warning:", err);
     }
 
-    // Fetch Alerts isolated specifically to this user's account & cameras
+    // Fetch Alerts isolated specifically to cameras currently in userCams
     try {
       if (userCams.length === 0) {
-        // If no cameras are linked to this account, no camera alerts exist
+        // If no cameras are linked to this account, no alerts exist
         setAlerts([]);
       } else {
         const alertRes = await fetch(`${apiBase}/api/alert`, {
@@ -200,19 +291,27 @@ function App() {
         });
         if (alertRes.ok) {
           const data = await alertRes.json();
-          if (data.alerts) {
+          if (data.alerts && Array.isArray(data.alerts)) {
+            // Strictly match cameras currently monitored/linked to this account
             const validCamIds = new Set(
               userCams.flatMap((c) => [
                 c.id.toString(),
-                `CAM-${c.id}`,
-                c.cameraName,
+                `CAM-${c.id}`.toUpperCase(),
+                (c.cameraName || "").toLowerCase().trim(),
               ])
             );
             const userOnlyAlerts = data.alerts.filter((a) => {
-              if (userProfile.id && a.user_id && a.user_id === userProfile.id) return true;
-              if (userProfile.isDemo && a.user_id === 999999) return true;
-              if (validCamIds.has(a.camera_id)) return true;
-              return false;
+              if (!a.camera_id) return false;
+              const cid = a.camera_id.toString().trim();
+              const cidUpper = cid.toUpperCase();
+              const cidNum = cid.replace(/^CAM-/i, "").trim();
+              const spatialName = (a.spatial_coordinates?.camera_name || "").toLowerCase().trim();
+              return (
+                validCamIds.has(cid) ||
+                validCamIds.has(cidUpper) ||
+                validCamIds.has(cidNum) ||
+                (spatialName && validCamIds.has(spatialName))
+              );
             });
             setAlerts(userOnlyAlerts);
           }
@@ -226,12 +325,12 @@ function App() {
   };
 
   useEffect(() => {
-    if (loggedIn) {
+    if (loggedIn && (userProfile.id || userProfile.isDemo)) {
       fetchBackendData();
       const interval = setInterval(fetchBackendData, 4000);
       return () => clearInterval(interval);
     }
-  }, [loggedIn, userProfile.isDemo]);
+  }, [loggedIn, userProfile.id, userProfile.isDemo]);
 
   // Handle Escape key to dismiss modal
   useEffect(() => {
@@ -260,10 +359,16 @@ function App() {
       formData.append("cameraName", newCameraName.trim() || selectedVideoFile.name);
       formData.append("location", newLocation.trim() || "Local Recorded Patrol");
       if (userProfile.isDemo) formData.append("isDemo", "true");
+      if (userProfile.email) formData.append("userEmail", userProfile.email);
+      if (userProfile.fullname) formData.append("userName", userProfile.fullname);
+      if (userProfile.rank) formData.append("userRank", userProfile.rank);
 
       const headers = {};
       if (userProfile.isDemo) headers["x-demo-user"] = "true";
       if (userProfile.id) headers["x-user-id"] = userProfile.id.toString();
+      if (userProfile.email) headers["x-user-email"] = userProfile.email;
+      if (userProfile.fullname) headers["x-user-name"] = userProfile.fullname;
+      if (userProfile.rank) headers["x-user-rank"] = userProfile.rank;
 
       const res = await fetch(`${apiBase}/api/camera/upload`, {
         method: "POST",
@@ -310,10 +415,42 @@ function App() {
       .replace(/^http:\/\/ip:/i, "http://")
       .replace(/^https:\/\/ip:/i, "https://");
 
+    // Auto-normalize phone camera links without protocol (e.g. 192.168.0.133:8080 or 192.168.0.133:8554)
+    if (!cleanStream.includes("://") && !cleanStream.startsWith("/") && !cleanStream.match(/^[a-zA-Z]:\\/) && !cleanStream.match(/^\d+$/)) {
+      if (cleanStream.includes(":8080")) {
+        cleanStream = `http://${cleanStream}`;
+      } else if (cleanStream.includes(":8554") || cleanStream.includes(":554")) {
+        cleanStream = `rtsp://${cleanStream}`;
+      }
+    }
+
+    // If IP Webcam URL lacks /video path, auto-append /video
+    if (cleanStream.startsWith("http://") || cleanStream.startsWith("https://")) {
+      try {
+        const u = new URL(cleanStream);
+        if (u.port === "8080" && (u.pathname === "/" || u.pathname === "")) {
+          u.pathname = "/video";
+          cleanStream = u.toString();
+        }
+      } catch (_) {}
+    }
+
     try {
       const headers = { "Content-Type": "application/json" };
       if (userProfile.isDemo) {
         headers["x-demo-user"] = "true";
+      }
+      if (userProfile.id) {
+        headers["x-user-id"] = userProfile.id.toString();
+      }
+      if (userProfile.email) {
+        headers["x-user-email"] = userProfile.email;
+      }
+      if (userProfile.fullname) {
+        headers["x-user-name"] = userProfile.fullname;
+      }
+      if (userProfile.rank) {
+        headers["x-user-rank"] = userProfile.rank;
       }
 
       const res = await fetch(`${apiBase}/api/camera`, {
@@ -325,6 +462,10 @@ function App() {
           rtsp_link: cleanStream,
           location: newLocation.trim() || "Sector Alpha Ground Post",
           isDemo: userProfile.isDemo,
+          userId: userProfile.id,
+          userEmail: userProfile.email,
+          userName: userProfile.fullname,
+          userRank: userProfile.rank,
         }),
       });
 
@@ -347,13 +488,53 @@ function App() {
     }
   };
 
-  // Quick Preset Helpers
-  const handleUseSampleStream = () => {
-    setNewCameraName("Border Sector North - Cam 1");
-    setNewRtspLink("videos/test.mp4");
-    setNewLocation("Northern Perimeter Post A (+10M Zone)");
+  // Camera Connection Deletion / Disconnection
+  const handleDeleteCamera = async (camId, e) => {
+    if (e) e.stopPropagation();
+    if (!camId) return;
+
+    // Immediately update local camera state to eliminate UI flicker
+    setCameras((prev) => {
+      const remaining = prev.filter((c) => c.id !== camId);
+      if (activeCameraId === camId) {
+        if (remaining.length > 0) {
+          handleSelectCamera(remaining[0]);
+        } else {
+          setActiveCameraId(null);
+          setLiveFrame(null);
+        }
+      }
+      return remaining;
+    });
+
+    // Immediately purge alerts for the removed camera so registry never glitches
+    setAlerts((prev) =>
+      prev.filter((a) => {
+        const alertCid = (a.camera_id || "").toString().replace(/^CAM-/i, "").trim();
+        return alertCid !== camId.toString();
+      })
+    );
+
+    const headers = {};
+    if (userProfile.isDemo) headers["x-demo-user"] = "true";
+    if (userProfile.id) headers["x-user-id"] = userProfile.id.toString();
+
+    try {
+      const res = await fetch(`${apiBase}/api/camera/${camId}`, {
+        method: "DELETE",
+        headers,
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        console.warn("Failed to delete camera connection on server");
+      }
+    } catch (err) {
+      console.error("Error deleting camera connection:", err);
+    }
   };
 
+  // Quick Preset Helpers
   const handleUsePhoneRtsp = () => {
     setNewCameraName("Mobile Tactical Scout");
     setNewRtspLink("rtsp://192.168.0.133:8554/");
@@ -372,10 +553,37 @@ function App() {
     setNewLocation("Command Center Local Ingest");
   };
 
-  // Filtered Alerts
-  const filteredAlerts = alerts.filter((a) => {
-    if (alertFilter === "critical") return a.confidence >= 0.75 || !a.confidence;
-    if (alertFilter === "warning") return a.confidence < 0.75;
+  // Active Camera & Breach Status (declared before filter usage to avoid TDZ ReferenceError)
+  const activeCamera = cameras.find((c) => c.id === activeCameraId) || cameras[0] || null;
+  const hasRecentBreach = alerts.length > 0 && alerts.some((a) => a && a.object_type === "person");
+
+  // Filtered Alerts: strictly for the camera currently being monitored
+  const activeCameraAlerts = alerts.filter((a) => {
+    if (!a) return false;
+    if (!activeCamera || !activeCamera.id) return true;
+    const activeIdStr = activeCamera.id.toString();
+    const activeUpper = `CAM-${activeIdStr}`.toUpperCase();
+    const activeName = (activeCamera.cameraName || "").toLowerCase().trim();
+    const spatialName = (a.spatial_coordinates?.camera_name || "").toLowerCase().trim();
+
+    const alertCid = (a.camera_id || "").toString().trim();
+    const alertCidUpper = alertCid.toUpperCase();
+    const alertCidNum = alertCid.replace(/^CAM-/i, "").trim();
+
+    return (
+      alertCid === activeIdStr ||
+      alertCidUpper === activeUpper ||
+      alertCidNum === activeIdStr ||
+      (activeName && (alertCid.toLowerCase() === activeName || spatialName === activeName))
+    );
+  });
+
+  const filteredAlerts = activeCameraAlerts.filter((a) => {
+    if (!a) return false;
+    const conf = parseFloat(a.confidence);
+    const isCritical = isNaN(conf) ? true : conf >= 0.75;
+    if (alertFilter === "critical") return isCritical;
+    if (alertFilter === "warning") return !isCritical;
     return true;
   });
 
@@ -383,6 +591,13 @@ function App() {
   const handleSignOut = () => {
     hasInitialActivatedRef.current = false;
     setLoggedIn(false);
+    setUserProfile({
+      id: null,
+      fullname: "",
+      email: "",
+      rank: "",
+      isDemo: false,
+    });
     setCameras([]);
     setAlerts([]);
     setActiveCameraId(null);
@@ -400,7 +615,7 @@ function App() {
               setUserProfile({
                 id: user.id || user._id,
                 fullname: user.fullname || "Tactical Officer",
-                email: user.email || "officer@ibvap.mil",
+                email: user.email || "officer@netra-ai.mil",
                 rank: user.rank || "Captain",
                 isDemo: false,
               });
@@ -420,7 +635,7 @@ function App() {
             setUserProfile({
               id: user.id || user._id,
               fullname: user.fullname || "Tactical Operator",
-              email: user.email || "operator@ibvap.mil",
+              email: user.email || "operator@netra-ai.mil",
               rank: user.rank || "Captain",
               isDemo: Boolean(user.isDemo),
             });
@@ -435,9 +650,6 @@ function App() {
     );
   }
 
-  const activeCamera = cameras.find((c) => c.id === activeCameraId) || cameras[0] || null;
-  const hasRecentBreach = alerts.length > 0 && alerts.some((a) => a.object_type === "person");
-
   return (
     <div className="app-shell">
       {/* 5. Clean, Icon-Based Sidebar Navigation (No bulky sign-out at bottom left) */}
@@ -445,7 +657,7 @@ function App() {
         <div className="brand-panel">
           <div className="brand-icon">🛡️</div>
           <div>
-            <div className="brand-name">IBVAP COMMAND</div>
+            <div className="brand-name">NETRA AI COMMAND</div>
             <div className="brand-tag">MILITARY SURVEILLANCE v2.5</div>
           </div>
         </div>
@@ -474,14 +686,21 @@ function App() {
             <span className="nav-icon">➕</span>
             <span className="nav-text">Add Camera</span>
           </button>
-          <button className="nav-item" type="button">
+          <button
+            className="nav-item"
+            type="button"
+            onClick={() => {
+              const el = document.getElementById("alerts-anchor");
+              if (el) el.scrollIntoView({ behavior: "smooth" });
+            }}
+          >
             <span className="nav-icon">🚨</span>
-            <span className="nav-text">Alert Registry</span>
-            <span className="nav-badge danger-badge">{alerts.length}</span>
+            <span className="nav-text">Active Incidents</span>
+            <span className="nav-badge alert-badge">{alerts.length}</span>
           </button>
           <button className="nav-item" type="button">
             <span className="nav-icon">📐</span>
-            <span className="nav-text">+10M Perimeter ROI</span>
+            <span className="nav-text">+6M Perimeter Fence</span>
           </button>
         </nav>
 
@@ -511,9 +730,9 @@ function App() {
               <span className="tag-pipeline">CONSOLIDATED MONOLITH v2.5</span>
               <span className="tag-ai">YOLOv8n-MIL ACTIVE</span>
             </div>
-            <h1>IBVAP Command Center</h1>
+            <h1>Netra AI Command Center</h1>
             <p className="header-subtitle">
-              Intelligent Border Video Analytics Platform • Tactical Intelligence
+              Netra AI Tactical Video Analytics Platform • Border Surveillance & Perimeter Defense
             </p>
           </div>
 
@@ -555,16 +774,18 @@ function App() {
           </div>
         </header>
 
-        {/* 2. Top Metric Cards (Distinct, properly padded, neon numbers, separated typography) */}
-        <section className="kpi-grid">
-          {/* Card 1: Active Cameras */}
+        {/* 2. Tactical KPI & Telemetry Metric Cards */}
+        <div className="kpi-grid">
+          {/* Card 1: Active Ingestion Stream */}
           <div className="kpi-card">
-            <div className="kpi-icon-wrap" style={{ color: "#60a5fa" }}>📹</div>
+            <div className="kpi-icon-wrap" style={{ color: "#38bdf8" }}>🎥</div>
             <div className="kpi-content">
-              <span className="kpi-label">ACTIVE SURVEILLANCE CAMERAS</span>
+              <span className="kpi-label">ACTIVE SURVEILLANCE FEED</span>
               <div className="kpi-row">
-                <span className="kpi-value blue-text">{cameras.length}</span>
-                <span className="kpi-subtext">LIVE INGESTION</span>
+                <span className="kpi-value">{activeCamera ? "ONLINE" : "OFFLINE"}</span>
+                <span className="kpi-subtext">
+                  {cameras.length} FEED{cameras.length === 1 ? "" : "S"} LINKED
+                </span>
               </div>
               <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
                 {activeCamera ? activeCamera.cameraName : "Standby • Link Feed"}
@@ -572,17 +793,17 @@ function App() {
             </div>
           </div>
 
-          {/* Card 2: Restricted Perimeter (+10M) */}
+          {/* Card 2: Restricted Perimeter (+6M Fence) */}
           <div className="kpi-card">
             <div className="kpi-icon-wrap" style={{ color: "#f59e0b" }}>📐</div>
             <div className="kpi-content">
               <span className="kpi-label">RESTRICTED PERIMETER</span>
               <div className="kpi-row">
-                <span className="kpi-value" style={{ color: "#f59e0b" }}>+10M</span>
-                <span className="kpi-subtext">YELLOW BRACKET ROI</span>
+                <span className="kpi-value" style={{ color: "#f59e0b" }}>+6M</span>
+                <span className="kpi-subtext">TACTICAL FENCE ROI</span>
               </div>
               <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
-                Automated Person Breach Zone
+                Lower Screen Boundary (6m)
               </div>
             </div>
           </div>
@@ -627,7 +848,7 @@ function App() {
               </div>
             </div>
           </div>
-        </section>
+        </div>
 
         {/* Two-Column Surveillance Workspace */}
         <div className="operations-grid">
@@ -698,7 +919,7 @@ function App() {
                 <div className="viewport-hud-footer">
                   <div className="hud-footer-left">
                     <span className="sensor-tag" style={{ color: "#facc15" }}>
-                      📐 +10M YELLOW PERIMETER ROI ACTIVE
+                      📐 +6M TACTICAL PERIMETER FENCE ACTIVE
                     </span>
                     <span className="sensor-tag">
                       • AUTOMATED EMAIL NOTIFIER: {userProfile.email}
@@ -727,7 +948,17 @@ function App() {
                     >
                       <div className="sec-cam-header">
                         <span className="sec-cam-title">{c.cameraName}</span>
-                        <span className="sec-cam-badge live-ai">ACTIVE</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <span className="sec-cam-badge live-ai">ACTIVE</span>
+                          <button
+                            type="button"
+                            className="btn-disconnect-cam"
+                            title="Disconnect and remove this camera connection"
+                            onClick={(e) => handleDeleteCamera(c.id, e)}
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
                       <div className="sec-cam-footer">
                         <strong>{c.location}</strong>
@@ -781,13 +1012,18 @@ function App() {
             <div className="alerts-scroll-area">
               {filteredAlerts.length === 0 ? (
                 <div className="no-alerts-empty">
-                  <div className="shield-icon">🛡️</div>
-                  <h4>PERIMETER SECURE</h4>
-                  <p>No unauthorized breaches detected inside the +10-meter yellow perimeter.</p>
+                  <div className="shield-icon">{activeCamera ? "🛡️" : "📡"}</div>
+                  <h4>{activeCamera ? "PERIMETER SECURE" : "NO CAMERA MONITORED"}</h4>
+                  <p>
+                    {activeCamera
+                      ? `No unauthorized breaches detected on ${activeCamera.cameraName}.`
+                      : "Select or link an RTSP camera feed to monitor live perimeter breaches."}
+                  </p>
                 </div>
               ) : (
                 filteredAlerts.map((alert, idx) => {
-                  const isCritical = alert.confidence >= 0.75 || !alert.confidence;
+                  const conf = parseFloat(alert.confidence);
+                  const isCritical = isNaN(conf) ? true : conf >= 0.75;
                   return (
                     <div
                       key={alert.alert_id || idx}
@@ -821,11 +1057,11 @@ function App() {
                           </span>
                         </div>
                         <div className="alert-desc">
-                          Unauthorized target crossed <strong>+10M Yellow Perimeter</strong>
+                          Unauthorized target crossed <strong>+6M Tactical Perimeter Fence</strong>
                         </div>
                         <div className="alert-meta-footer">
                           <span className="badge-confidence">
-                            {alert.confidence ? `${Math.round(alert.confidence * 100)}% Conf.` : "92% Conf."}
+                            {!isNaN(conf) ? `${Math.round(conf * 100)}% Conf.` : "92% Conf."}
                           </span>
                           <span>•</span>
                           <span>Track #{alert.tracking_id || "01"}</span>
@@ -872,7 +1108,7 @@ function App() {
                 </h2>
                 <p className="add-camera-subtitle">
                   {ingestMode === "video"
-                    ? "Upload any video file (.mp4, .avi, .mkv, .mov) to run YOLOv8 person tracking & +10M Perimeter intrusion detection."
+                    ? "Upload any video file (.mp4, .avi, .mkv, .mov) to run YOLOv8 person tracking & +6M Tactical Fence intrusion detection."
                     : "Connect an RTSP stream, IP Webcam HTTP feed, or local webcam to run live tactical surveillance."}
                 </p>
               </div>
@@ -966,21 +1202,6 @@ function App() {
                   </div>
                 )}
 
-                {/* Quick 1-Click Built-in Video Option */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "4px" }}>
-                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Don't have a video file ready?</span>
-                  <button
-                    type="button"
-                    className="preset-chip"
-                    onClick={() => {
-                      setIngestMode("stream");
-                      handleUseSampleStream();
-                    }}
-                  >
-                    ⚡ Use Built-in Patrol Video (videos/test.mp4)
-                  </button>
-                </div>
-
                 <div className="input-group">
                   <label htmlFor="cam-name-vid">Video / Feed Name</label>
                   <input
@@ -1016,8 +1237,8 @@ function App() {
                   }}
                 >
                   <span>
-                    🛡️ <strong>Automated Protection:</strong> Real-time YOLOv8 person detection will draw a{" "}
-                    <strong>+10-meter yellow bracket</strong> on the video. Any perimeter intrusion triggers
+                    🛡️ <strong>Automated Protection:</strong> Real-time YOLOv8 person detection monitors the{" "}
+                    <strong>+6-meter tactical perimeter fence</strong> (covering the lower screen boundary). Any person entering the perimeter triggers
                     alerts and emails <strong>{userProfile.email}</strong>.
                   </span>
                 </div>
@@ -1067,23 +1288,16 @@ function App() {
                   <button
                     type="button"
                     className="preset-chip"
-                    onClick={handleUseSampleStream}
-                  >
-                    ⚡ Sample Test Video (videos/test.mp4)
-                  </button>
-                  <button
-                    type="button"
-                    className="preset-chip"
                     onClick={handleUsePhoneRtsp}
                   >
-                    📱 Phone RTSP (rtsp://192.168.0.106:8554/)
+                    📱 Phone RTSP (rtsp://192.168.0.133:8554/)
                   </button>
                   <button
                     type="button"
                     className="preset-chip"
                     onClick={handleUsePhoneIpWebcam}
                   >
-                    🌐 IP Webcam (http://192.168.0.106:8080/video)
+                    🌐 IP Webcam (http://192.168.0.133:8080/video)
                   </button>
                   <button
                     type="button"
@@ -1160,6 +1374,39 @@ function App() {
                 </div>
               </form>
             )}
+
+            {/* Connected Feeds & Management */}
+            {cameras.length > 0 && (
+              <div className="modal-connected-cams">
+                <div className="modal-connected-header">
+                  <h4>🔗 Active Connected Feeds ({cameras.length})</h4>
+                  <span className="modal-connected-hint">Click Disconnect to remove any connection</span>
+                </div>
+                <div className="modal-connected-list">
+                  {cameras.map((c) => (
+                    <div key={c.id} className="modal-connected-item">
+                      <div className="modal-cam-info">
+                        <div className="modal-cam-name">
+                          {c.cameraName}
+                          {c.id === activeCameraId && <span className="active-tag">FOCUS</span>}
+                        </div>
+                        <div className="modal-cam-meta">
+                          {c.location || "Sector Alpha"} • {c.rtsp_link || "Video Ingest"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-modal-disconnect"
+                        onClick={(e) => handleDeleteCamera(c.id, e)}
+                        title="Disconnect this feed"
+                      >
+                        ✕ Disconnect
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1167,4 +1414,12 @@ function App() {
   );
 }
 
-export default App;
+function AppWithBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
+
+export default AppWithBoundary;

@@ -28,17 +28,24 @@ class TrackedObject:
 
 
 class Tracker:
-    def __init__(self, model_path: str = "yolov8n.pt", confidence_threshold: float = 0.4):
+    def __init__(self, model_path: str = "yolov8n.pt", confidence_threshold: float = 0.55):
         self.model = YOLO(model_path)
         self.confidence_threshold = confidence_threshold
 
     def track(self, frame) -> list[TrackedObject]:
         """
         Run tracking on a single frame from an ONGOING stream.
-        persist=True tells YOLO to remember previous frames' tracked
-        objects, so IDs stay consistent as this is called repeatedly.
+        Strictly filters for COCO class 0 ('person') and enforces
+        confidence threshold of 0.55 to prevent curtains, furniture,
+        or shadows from triggering false positive intrusions.
         """
-        results = self.model.track(frame, persist=True, verbose=False)
+        results = self.model.track(
+            frame,
+            classes=[0],
+            conf=self.confidence_threshold,
+            persist=True,
+            verbose=False,
+        )
         result = results[0]
 
         tracked_objects = []
@@ -51,6 +58,8 @@ class Tracker:
                     continue
                 class_id = int(box.cls[0])
                 class_name = self.model.names[class_id]
+                if class_name.lower() != "person":
+                    continue
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 tracked_objects.append(TrackedObject(idx + 1, class_name, confidence, (x1, y1, x2, y2)))
             return tracked_objects
@@ -60,9 +69,12 @@ class Tracker:
             if confidence < self.confidence_threshold:
                 continue
 
-            track_id = int(box.id[0])
             class_id = int(box.cls[0])
             class_name = self.model.names[class_id]
+            if class_name.lower() != "person":
+                continue
+
+            track_id = int(box.id[0])
             x1, y1, x2, y2 = box.xyxy[0].tolist()
 
             tracked_objects.append(TrackedObject(track_id, class_name, confidence, (x1, y1, x2, y2)))

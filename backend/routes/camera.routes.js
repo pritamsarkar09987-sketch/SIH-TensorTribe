@@ -31,7 +31,7 @@ cameraRouter.get("/getCameraById/:cameraId", getCameraByIdController);
 cameraRouter.patch("/:cameraId", protectRoute, updateCameraController);
 cameraRouter.patch("/updateCamera/:cameraId", protectRoute, updateCameraController);
 
-cameraRouter.delete("/:cameraId", protectRoute, deleteCameraController);
-cameraRouter.delete("/deleteCamera/:cameraId", protectRoute, deleteCameraController);
+cameraRouter.delete("/:cameraId", deleteCameraController);
+cameraRouter.delete("/deleteCamera/:cameraId", deleteCameraController);
 
 export default cameraRouter;

@@ -23,8 +23,8 @@ workers: dict[str, CameraWorker] = {}
 pipelines: dict[str, DetectionPipeline] = {}
 event_manager = EventManager()
 
-# Default static +10-meter perimeter yellow bracket zone
-default_zone = Zone("+10M-PERIMETER", points=[(220, 360), (1060, 360), (1220, 680), (60, 680)])
+# Default static +6-meter perimeter tactical fence zone (lower screen boundary: y=450 to 720)
+default_zone = Zone("+6M-FENCE", points=[(0, 450), (1280, 450), (1280, 720), (0, 720)])
 
 
 class DynamicIngestRequest(BaseModel):
@@ -32,7 +32,7 @@ class DynamicIngestRequest(BaseModel):
     camera_name: str = "Tactical Perimeter Cam"
     rtsp_link: str
     user_id: int | None = None
-    user_email: str = "operator@ibvap.mil"
+    user_email: str = "operator@netra-ai.mil"
     user_name: str = "Tactical Officer"
     user_rank: str = "Captain"
 
@@ -48,6 +48,23 @@ def resolve_source_path(source: str) -> tuple[str, str]:
     for prefix in ["rtsp://ip:", "rtsps://ip:", "http://ip:", "https://ip:"]:
         if s.startswith(prefix):
             s = prefix.replace("ip:", "") + s[len(prefix):]
+
+    # Auto-normalize phone camera links without protocol (e.g. 192.168.0.133:8080 or 192.168.0.133:8554)
+    if not any(s.startswith(p) for p in ["rtsp://", "rtsps://", "http://", "https://"]) and not s.isdigit() and not os.path.isabs(s):
+        if ":8080" in s:
+            s = f"http://{s}"
+        elif ":8554" in s or ":554" in s:
+            s = f"rtsp://{s}"
+
+    # If IP Webcam URL lacks /video path, auto-append /video
+    if s.startswith("http://") or s.startswith("https://"):
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(s)
+            if parsed.port == 8080 and parsed.path in ("", "/"):
+                s = f"{s.rstrip('/')}/video"
+        except Exception:
+            pass
 
     # Check for live stream protocols or webcam digit
     if s.startswith("rtsp://") or s.startswith("rtsps://") or s.startswith("http://") or s.startswith("https://") or s.isdigit():

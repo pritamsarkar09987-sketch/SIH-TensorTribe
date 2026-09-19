@@ -11,6 +11,7 @@ Runs continuously in the background alongside a live CameraWorker.
 """
 
 import os
+import queue
 import threading
 import time
 import base64
@@ -30,7 +31,7 @@ class DetectionPipeline:
     def __init__(self, camera_id: str, camera_worker, event_manager: EventManager, zone: Zone = None,
                  camera_name: str = "Tactical Perimeter Cam",
                  user_id: int = None,
-                 user_email: str = "operator@ibvap.mil",
+                 user_email: str = "operator@netra-ai.mil",
                  user_name: str = "Tactical Officer",
                  user_rank: str = "Captain",
                  broadcaster_url: str = "http://localhost:5000/ingest",
@@ -47,12 +48,14 @@ class DetectionPipeline:
         self.api_alert_url = api_alert_url
 
         self.tracker = Tracker()
-        # Default static +10m perimeter bracket zone
-        self.zone = zone or Zone("+10M-PERIMETER", points=[(220, 360), (1060, 360), (1220, 680), (60, 680)])
+        # Default static +6m perimeter fence zone (lower screen boundary: 0,450 to 1280,720)
+        self.zone = zone or Zone("+6M-FENCE", points=[(0, 450), (1280, 450), (1280, 720), (0, 720)])
         self.intrusion_detector = IntrusionDetector(self.zone)
 
         self._running = False
         self._thread = None
+        self._sender_thread = None
+        self._frame_queue = queue.Queue(maxsize=1)
         self._last_db_alert_time = 0
 
         # Email cooldown timer (45 seconds)
@@ -61,60 +64,104 @@ class DetectionPipeline:
 
     def start(self) -> None:
         self._running = True
+        self._sender_thread = threading.Thread(target=self._sender_loop, daemon=True)
+        self._sender_thread.start()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
         print(f"[AI Pipeline] Started for camera '{self.camera_name}' (ID: {self.camera_id}). Target: {self.broadcaster_url}")
+
+    def stop(self) -> None:
+        """Signal the pipeline and sender thread to terminate cleanly."""
+        self._running = False
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        if self._sender_thread is not None and self._sender_thread.is_alive():
+            self._sender_thread.join(timeout=1.0)
+        print(f"[AI Pipeline] Stopped for camera ID: {self.camera_id}")
+
+    def _enqueue_frame(self, jpeg_bytes: bytes) -> None:
+        """Non-blocking queue insert with newest-frame-wins policy (zero latency accumulation)."""
+        try:
+            self._frame_queue.put_nowait(jpeg_bytes)
+        except queue.Full:
+            try:
+                self._frame_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._frame_queue.put_nowait(jpeg_bytes)
+            except queue.Full:
+                pass
+
+    def _sender_loop(self) -> None:
+        """Decoupled transmission thread: posts latest frame to Node.js without blocking AI."""
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=2, pool_maxsize=4, max_retries=0)
+        session.mount("http://", adapter)
+        while self._running:
+            try:
+                jpeg_data = self._frame_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                session.post(
+                    self.broadcaster_url,
+                    data=jpeg_data,
+                    headers={"Content-Type": "image/jpeg"},
+                    timeout=0.5
+                )
+            except Exception:
+                pass
 
     def _draw_hud(self, frame, tracked_objects, has_intrusion: bool):
         h, w = frame.shape[:2]
 
         # -------------------------------------------------------------
-        # 1. Draw Static Yellow Bracket / Polygon (+10M Perimeter ROI)
+        # 1. Draw Static +6M Tactical Perimeter Fence (Lower Screen Zone: y=450 to 720)
         # -------------------------------------------------------------
         overlay = frame.copy()
         # High-visibility Tactical Yellow (BGR: 0, 255, 255) when secure; Bright Red (0, 0, 255) when breached
         bracket_color = (0, 0, 255) if has_intrusion else (0, 255, 255)
 
-        # Semi-transparent zone fill
-        fill_alpha = 0.28 if has_intrusion else 0.16
+        # Semi-transparent zone fill across lower screen boundary (Y: 450 to 720)
+        fill_alpha = 0.25 if has_intrusion else 0.14
         cv2.fillPoly(overlay, [self.zone._np_points], color=bracket_color)
         cv2.addWeighted(overlay, fill_alpha, frame, 1.0 - fill_alpha, 0, frame)
 
-        # Draw continuous perimeter border line
-        cv2.polylines(frame, [self.zone._np_points], isClosed=True, color=bracket_color, thickness=2)
+        # Draw primary tactical horizontal fence line across y=450
+        cv2.line(frame, (0, 450), (w, 450), bracket_color, 3)
 
-        # Draw tactical corner bracket accents at each polygon vertex
-        bracket_len = 24
-        for pt in self.zone.points:
-            px, py = int(pt[0]), int(pt[1])
-            # Horizontal & vertical tick marks
-            cv2.line(frame, (px - bracket_len, py), (px + bracket_len, py), bracket_color, 3)
-            cv2.line(frame, (px, py - bracket_len), (px, py + bracket_len), bracket_color, 3)
+        # Draw tactical military fence wire / post ticks along the boundary (y=450)
+        for x in range(0, w, 40):
+            cv2.line(frame, (x, 438), (x, 462), bracket_color, 2)
+            cv2.line(frame, (x, 450), (x + 20, 462), bracket_color, 1)
 
         # Zone Label Badge
-        badge_text = "[ +10-METER PERIMETER RESTRICTED ZONE ]" if not has_intrusion else "[ ⚠️ INTRUSION DETECTED: +10M BREACH ]"
-        pt1 = self.zone.points[0]
-        badge_pos = (max(20, int(pt1[0]) + 15), max(40, int(pt1[1]) - 12))
+        badge_text = "[ +6-METER TACTICAL PERIMETER FENCE ]" if not has_intrusion else "[ ⚠️ INTRUSION DETECTED: +6M FENCE BREACH ]"
+        badge_pos = (24, 485)
         (tw, th), _ = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
         cv2.rectangle(frame, (badge_pos[0] - 6, badge_pos[1] - th - 6), (badge_pos[0] + tw + 6, badge_pos[1] + 6), (15, 20, 25), -1)
         cv2.rectangle(frame, (badge_pos[0] - 6, badge_pos[1] - th - 6), (badge_pos[0] + tw + 6, badge_pos[1] + 6), bracket_color, 1)
         cv2.putText(frame, badge_text, badge_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.6, bracket_color, 2)
 
         # -------------------------------------------------------------
-        # 2. Draw Tracked Person Bounding Boxes & Badges
+        # 2. Draw Tracked Person Bounding Boxes & Badges (Strictly Persons Only)
         # -------------------------------------------------------------
         for obj in tracked_objects:
             class_name = getattr(obj, "class_name", "person").lower()
+            if class_name != "person":
+                continue
+
             x1, y1, x2, y2 = [int(v) for v in obj.box]
 
             is_inside = self.zone.intersects_box(x1, y1, x2, y2)
-            box_color = (0, 0, 255) if is_inside else (0, 255, 0) # Red if inside yellow bracket, green if safe outside
+            box_color = (0, 0, 255) if is_inside else (0, 255, 0) # Red if inside +6m fence, green if safe outside
 
             # Bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
 
             # Person label tag
-            label = f"ID:{obj.track_id} {class_name.upper()} {obj.confidence:.2f}"
+            label = f"ID:{obj.track_id} PERSON {obj.confidence:.2f}"
             if is_inside:
                 label += " [INTRUSION]"
 
@@ -127,10 +174,10 @@ class DetectionPipeline:
         # -------------------------------------------------------------
         cv2.rectangle(frame, (0, 0), (w, 36), (10, 14, 22), -1)
         timestamp_str = time.strftime("%Y-%m-%d %H:%M:%S")
-        cv2.putText(frame, f"IVVP TACTICAL MONITOR | {self.camera_name.upper()} | {timestamp_str}", (16, 24),
+        cv2.putText(frame, f"NETRA AI TACTICAL MONITOR | {self.camera_name.upper()} | {timestamp_str}", (16, 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 180), 2)
 
-        status_text = "STATUS: +10M BREACH DETECTED" if has_intrusion else "STATUS: +10M PERIMETER SECURE"
+        status_text = "STATUS: +6M FENCE BREACH DETECTED" if has_intrusion else "STATUS: +6M PERIMETER SECURE"
         status_color = (0, 0, 255) if has_intrusion else (0, 255, 0)
         cv2.putText(frame, status_text, (w - 340, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, status_color, 2)
 
@@ -164,18 +211,19 @@ class DetectionPipeline:
         # Top Header Bar
         cv2.rectangle(frame, (0, 0), (w, 36), (10, 14, 22), -1)
         timestamp_str = time.strftime("%Y-%m-%d %H:%M:%S")
-        cv2.putText(frame, f"IVVP TACTICAL SURVEILLANCE | {self.camera_name.upper()} | {timestamp_str}",
+        cv2.putText(frame, f"NETRA AI TACTICAL SURVEILLANCE | {self.camera_name.upper()} | {timestamp_str}",
                     (16, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 180), 2)
-        cv2.putText(frame, "AI PIPELINE: ARMED (+10M YELLOW ROI)", (w - 420, 24),
+        cv2.putText(frame, "AI PIPELINE: ARMED (+6M FENCE LOWER BOUNDARY)", (w - 440, 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 2)
 
         # Center Status Telemetry Box
         worker_status = getattr(self.camera_worker, "status", "connecting")
         reconnect_count = getattr(self.camera_worker, "reconnect_count", 0)
         source_url = getattr(self.camera_worker, "source", "RTSP Stream")
+        last_error = getattr(self.camera_worker, "last_error", "")
 
         cx, cy = w // 2, h // 2
-        box_w, box_h = 780, 220
+        box_w, box_h = 820, 230
         bx1, by1 = cx - box_w // 2, cy - box_h // 2
         bx2, by2 = cx + box_w // 2, cy + box_h // 2
 
@@ -188,34 +236,47 @@ class DetectionPipeline:
         cv2.putText(frame, f"Stream Source: {source_url}", (bx1 + 24, by1 + 84),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 255), 1)
 
-        cv2.putText(frame, f"Status: {worker_status.upper()} | Protocol: RTSP (TCP Interleaved) | Backend: FFMPEG",
-                    (bx1 + 24, by1 + 120), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (180, 200, 220), 1)
+        status_line = f"Status: {worker_status.upper()} | Protocol: RTSP (Low Delay) | Backend: FFMPEG"
+        if last_error:
+            status_line += f" ({last_error[:35]}...)"
+        cv2.putText(frame, status_line, (bx1 + 24, by1 + 120), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (180, 200, 220), 1)
 
         cv2.putText(frame, "Assigned Officer: " + str(self.user_rank) + " " + str(self.user_name) + " (" + str(self.user_email) + ")",
                     (bx1 + 24, by1 + 154), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (140, 160, 180), 1)
 
-        subtext = "Note: Phone RTSP app must be running with screen on. Tip: Android IP Webcam app (http://<ip>:8080/video) or PC Webcam (0) also supported."
-        cv2.putText(frame, subtext, (bx1 + 24, by1 + 192),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (100, 220, 120), 1)
+        subtext = "Note: Ensure phone screen is on & app running. Tip: IP Webcam (http://<ip>:8080/video) or PC Webcam (0) also supported."
+        cv2.putText(frame, subtext, (bx1 + 24, by1 + 194),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (100, 220, 120), 1)
 
         return frame
 
     def _run_loop(self) -> None:
-        session = requests.Session()
+        cached_tracked_objects = []
+        cached_has_intrusion = False
+        frame_counter = 0
+
         while self._running:
+            loop_start = time.time()
             raw_frame = self.camera_worker.get_latest_frame()
 
             if raw_frame is not None:
-                # Standardize frame resolution to 1280x720 for consistent zone detection & tactical HUD
+                # Standardize frame resolution to 1280x720 using fast INTER_LINEAR
                 fh, fw = raw_frame.shape[:2]
                 if fw != 1280 or fh != 720:
-                    frame_copy = cv2.resize(raw_frame, (1280, 720), interpolation=cv2.INTER_AREA)
+                    frame_copy = cv2.resize(raw_frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
                 else:
                     frame_copy = raw_frame.copy()
 
-                tracked_objects = self.tracker.track(frame_copy)
-                new_intrusions = self.intrusion_detector.check(tracked_objects)
-                has_intrusion = len(self.intrusion_detector._tracks_inside) > 0
+                frame_counter += 1
+                # Inference decimation: Run YOLOv8 on alternate frames
+                # Intervening frames reuse tracks for smooth 25-30 FPS display
+                if frame_counter % 2 == 1 or len(cached_tracked_objects) == 0:
+                    tracked_objects = self.tracker.track(frame_copy)
+                    self.intrusion_detector.check(tracked_objects)
+                    cached_tracked_objects = tracked_objects
+                    cached_has_intrusion = len(self.intrusion_detector._tracks_inside) > 0
+
+                has_intrusion = cached_has_intrusion
 
                 # Process any detected intrusions
                 if has_intrusion:
@@ -224,58 +285,56 @@ class DetectionPipeline:
                     # Trigger DB alert (debounce 3s)
                     if now - self._last_db_alert_time > 3.0:
                         self._last_db_alert_time = now
-                        track_id = list(self.intrusion_detector._tracks_inside)[0]
+                        track_id = list(self.intrusion_detector._tracks_inside)[0] if self.intrusion_detector._tracks_inside else 1
                         threading.Thread(target=self._post_db_alert, args=(track_id, frame_copy), daemon=True).start()
 
                     # Trigger Cooldown Email Notification (debounce 45s)
                     if now - self._last_email_time >= self.email_cooldown_seconds:
                         self._last_email_time = now
-                        track_id = list(self.intrusion_detector._tracks_inside)[0]
+                        track_id = list(self.intrusion_detector._tracks_inside)[0] if self.intrusion_detector._tracks_inside else 1
                         threading.Thread(target=self._send_intrusion_email, args=(track_id,), daemon=True).start()
 
-                # Render tactical HUD overlay with +10m yellow bracket
-                annotated = self._draw_hud(frame_copy, tracked_objects, has_intrusion)
+                # Render tactical HUD overlay with +6m tactical perimeter fence
+                annotated = self._draw_hud(frame_copy, cached_tracked_objects, has_intrusion)
 
-                # Encode JPEG and stream directly to Node.js /ingest endpoint
-                ret, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                # Encode JPEG at quality 65 (50% smaller payload, 2x faster decode, lower latency)
+                ret, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 65])
                 if ret:
-                    try:
-                        session.post(self.broadcaster_url, data=buffer.tobytes(), headers={"Content-Type": "image/jpeg"}, timeout=0.6)
-                    except Exception:
-                        pass  # Non-blocking if Node server is temporarily restarting
-                time.sleep(1 / 30)
+                    self._enqueue_frame(buffer.tobytes())
+
+                # Target 30 FPS with precise elapsed-time compensation
+                elapsed = time.time() - loop_start
+                sleep_time = max(0.001, (1.0 / 30.0) - elapsed)
+                time.sleep(sleep_time)
             else:
                 # Stream active tactical standby HUD when waiting for camera connection
                 standby = self._create_standby_frame()
-                ret, buffer = cv2.imencode('.jpg', standby, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                ret, buffer = cv2.imencode('.jpg', standby, [cv2.IMWRITE_JPEG_QUALITY, 65])
                 if ret:
-                    try:
-                        session.post(self.broadcaster_url, data=buffer.tobytes(), headers={"Content-Type": "image/jpeg"}, timeout=0.6)
-                    except Exception:
-                        pass
+                    self._enqueue_frame(buffer.tobytes())
                 time.sleep(1 / 10)
 
     def _send_intrusion_email(self, track_id: int) -> None:
         """Sends an email breach notification with cooldown handling."""
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
-        subject = f"[IVVP ALERT] +10-Meter Perimeter Breach Detected - {self.camera_name}"
+        subject = f"[NETRA AI ALERT] +6-Meter Tactical Fence Breach Detected - {self.camera_name}"
         body = f"""====================================================
-TACTICAL INTRUSION ALERT - IVVP PLATFORM
+TACTICAL INTRUSION ALERT - NETRA AI PLATFORM
 ====================================================
 Alert Level:    CRITICAL PERIMETER BREACH
 Target Camera:  {self.camera_name} ({self.camera_id})
-Perimeter Zone: +10-Meter Restricted Buffer
+Perimeter Zone: +6-Meter Tactical Fence (Lower Screen Boundary)
 Assigned User:  {self.user_rank} {self.user_name}
 Target Email:   {self.user_email}
 Target Track:   Person (Track ID #{track_id})
 Timestamp:      {timestamp}
 Status:         ACTIVE BREACH DETECTED
 ====================================================
-A person has entered or intersected the +10-meter
-monitored restricted zone. Immediate tactical perimeter
+A person has entered or crossed the +6-meter
+monitored tactical perimeter fence. Immediate tactical perimeter
 verification is advised.
 
-Automated Alert generated by IVVP Computer Vision Engine.
+Automated Alert generated by Netra AI Computer Vision Engine.
 (Cooldown active: next notification suppressed for 45s).
 """
         print(f"\n[EMAIL ALERT DISPATCHED - COOLDOWN ACTIVE (45s)]")
@@ -288,7 +347,7 @@ Automated Alert generated by IVVP Computer Vision Engine.
         smtp_port = int(os.getenv("SMTP_PORT", "587"))
         smtp_user = os.getenv("SMTP_USER")
         smtp_pass = os.getenv("SMTP_PASSWORD")
-        from_email = os.getenv("ALERT_EMAIL_FROM", smtp_user or "alerts@ivvp-military.org")
+        from_email = os.getenv("ALERT_EMAIL_FROM", smtp_user or "alerts@netra-ai.mil")
 
         if smtp_host and smtp_user and smtp_pass:
             try:
@@ -298,15 +357,22 @@ Automated Alert generated by IVVP Computer Vision Engine.
                 msg["Subject"] = subject
                 msg.attach(MIMEText(body, "plain"))
 
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-                    server.starttls()
-                    server.login(smtp_user, smtp_pass)
-                    server.send_message(msg)
-                print(f"[Email Notification] Successfully sent SMTP email to {self.user_email}")
+                if smtp_port == 465:
+                    with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=12) as server:
+                        server.login(smtp_user, smtp_pass)
+                        server.send_message(msg)
+                else:
+                    with smtplib.SMTP(smtp_host, smtp_port, timeout=12) as server:
+                        server.ehlo()
+                        server.starttls()
+                        server.ehlo()
+                        server.login(smtp_user, smtp_pass)
+                        server.send_message(msg)
+                print(f"[Email Notification] Successfully sent real SMTP breach notification to {self.user_email}")
             except Exception as e:
-                print(f"[Email Notification Warning] SMTP delivery failed ({e}). Logged to audit trail.")
+                print(f"[Email Notification Error] SMTP delivery failed to {self.user_email} ({e}).")
         else:
-            print(f"[Email Notification] Real email audit logged for {self.user_email} (SMTP env not configured).")
+            print(f"[Email Notification Notice] Intrusion occurred for {self.user_email}, but SMTP credentials (SMTP_HOST, SMTP_USER, SMTP_PASSWORD) are not configured in .env.")
 
     def _post_db_alert(self, track_id: int, frame) -> None:
         try:
@@ -314,19 +380,23 @@ Automated Alert generated by IVVP Computer Vision Engine.
             _, buf = cv2.imencode('.jpg', thumb, [cv2.IMWRITE_JPEG_QUALITY, 50])
             b64_snapshot = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode('utf-8')
 
-            requests.post(
+            res = requests.post(
                 self.api_alert_url,
                 json={
                     "camera_id": self.camera_id,
-                    "user_id": self.user_id,
+                    "user_id": self.user_id or 999999,
                     "object_type": "person",
-                    "tracking_id": track_id,
+                    "tracking_id": int(track_id),
                     "confidence": 0.92,
-                    "spatial_coordinates": {"zone": "+10m_perimeter", "camera_name": self.camera_name},
+                    "spatial_coordinates": {"zone": "+6m_fence", "camera_name": self.camera_name},
                     "snapshot_data": b64_snapshot
                 },
                 timeout=2.0
             )
+            if res.status_code not in [200, 201]:
+                print(f"[Alert DB sync error]: {res.status_code} {res.text}")
+            else:
+                print(f"[Alert DB sync]: Successfully logged intrusion alert for {self.camera_id} in breach register.")
         except Exception as e:
             print(f"[Alert DB sync error]: {e}")
 
