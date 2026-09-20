@@ -72,14 +72,13 @@ const getUploadsDir = () => {
   const candidates = [
     path.resolve(process.cwd(), "uploads"),
     path.resolve(process.cwd(), "..", "uploads"),
-    "D:\\ibvap-workspace\\SIH-TensorTribe\\uploads",
   ];
   for (const dir of candidates) {
     try {
       if (fs.existsSync(dir)) return dir;
     } catch (e) {}
   }
-  const fallback = path.resolve(process.cwd(), "..", "uploads");
+  const fallback = path.resolve(process.cwd(), "uploads");
   try {
     fs.mkdirSync(fallback, { recursive: true });
   } catch (e) {}
@@ -105,7 +104,8 @@ export const videoUploadMiddleware = multer({
 // Helper to notify Python AI backend to switch / start RTSP ingestion
 const triggerAiIngestion = async (cameraData) => {
   try {
-    const res = await fetch("http://127.0.0.1:8000/cameras/ingest_dynamic", {
+    const aiBase = process.env.AI_ENGINE_URL || "http://127.0.0.1:8000";
+    const res = await fetch(`${aiBase}/cameras/ingest_dynamic`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cameraData),

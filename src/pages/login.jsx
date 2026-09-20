@@ -6,7 +6,9 @@ function Login({ onLogin, onRegister }) {
   const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const apiBase = window.location.port === "5173" ? "http://localhost:5000" : "";
+  const apiBase =
+    import.meta.env.VITE_API_BASE_URL ||
+    (window.location.port === "5173" ? "http://localhost:5000" : "");
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();

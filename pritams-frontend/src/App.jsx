@@ -275,7 +275,9 @@ function App() {
   const [addCamLoading, setAddCamLoading] = useState(false);
   const [addCamError, setAddCamError] = useState("");
 
-  const apiBase = window.location.port === "5173" ? "http://localhost:5000" : "";
+  const apiBase =
+    import.meta.env.VITE_API_BASE_URL ||
+    (window.location.port === "5173" ? "http://localhost:5000" : "");
 
   // Live Military Clock (Zulu + Local)
   useEffect(() => {
@@ -300,7 +302,7 @@ function App() {
         setWsStatus("connecting");
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const host = window.location.port === "5173" ? "localhost:5000" : window.location.host;
-        const wsUrl = `${protocol}//${host}/stream`;
+        const wsUrl = import.meta.env.VITE_WS_URL || `${protocol}//${host}/stream`;
 
         const ws = new WebSocket(wsUrl);
         ws.binaryType = "blob";

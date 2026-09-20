@@ -159,8 +159,8 @@ def ingest_dynamic(payload: DynamicIngestRequest):
         user_email=payload.user_email,
         user_name=payload.user_name,
         user_rank=payload.user_rank,
-        broadcaster_url="http://localhost:5000/ingest",
-        api_alert_url="http://localhost:5000/api/alert",
+        broadcaster_url=os.getenv("BROADCASTER_URL", "http://localhost:5000/ingest"),
+        api_alert_url=os.getenv("API_ALERT_URL", "http://localhost:5000/api/alert"),
     )
     pipeline.start()
     pipelines[camera_id] = pipeline
@@ -238,8 +238,8 @@ def start_camera(camera_id: str):
         event_manager=event_manager,
         zone=default_zone,
         camera_name=camera.name,
-        broadcaster_url="http://localhost:5000/ingest",
-        api_alert_url="http://localhost:5000/api/alert",
+        broadcaster_url=os.getenv("BROADCASTER_URL", "http://localhost:5000/ingest"),
+        api_alert_url=os.getenv("API_ALERT_URL", "http://localhost:5000/api/alert"),
     )
     pipeline.start()
     pipelines[camera_id] = pipeline

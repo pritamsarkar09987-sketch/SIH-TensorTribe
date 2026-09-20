@@ -1,5 +1,6 @@
 import http from "http";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import express from "express";
 import cors from "cors";
@@ -8,14 +9,20 @@ import dotenv from "dotenv";
 import { WebSocketServer, WebSocket } from "ws";
 
 dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+if (!process.env.DB_HOST && !process.env.DATABASE_URL) {
+  const rootEnv = path.resolve(__dirname, "../../.env");
+  if (fs.existsSync(rootEnv)) {
+    dotenv.config({ path: rootEnv });
+  }
+}
 
 import authRouter from "./routes/auth.routes.js";
 import connectDB from "./db/connectdb.js";
 import cameraRouter from "./routes/camera.routes.js";
 import alertRouter from "./routes/alert.routes.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const port = process.env.PORT || 5000;
 const app = express();
@@ -118,7 +125,14 @@ app.get("/api/health", (req, res) => {
 // -------------------------------------------------------------
 // 4. Consolidated Frontend Dashboard Serving
 // -------------------------------------------------------------
-const frontendDistPath = path.resolve(__dirname, "../../pritams-frontend/dist");
+// 4. Consolidated Frontend Dashboard Serving
+// -------------------------------------------------------------
+const candidateDistPaths = [
+  path.resolve(__dirname, "../../dist"),
+  path.resolve(__dirname, "../../pritams-frontend/dist"),
+  path.resolve(__dirname, "../dist"),
+];
+const frontendDistPath = candidateDistPaths.find((p) => fs.existsSync(p)) || candidateDistPaths[0];
 app.use(express.static(frontendDistPath));
 
 app.use((req, res, next) => {
@@ -130,7 +144,7 @@ app.use((req, res, next) => {
             <body style="background:#0c121e;color:#fff;font-family:sans-serif;padding:2rem;">
               <h2>Netra AI Tactical Command Monolith Online</h2>
               <p>API and WebSocket stream are active on port ${port}.</p>
-              <p>Please run <code>npm run build</code> in pritams-frontend to compile the static UI bundle.</p>
+              <p>Please run <code>npm run build</code> in pritams-frontend or the root folder to compile the static UI bundle.</p>
             </body>
           </html>
         `);
