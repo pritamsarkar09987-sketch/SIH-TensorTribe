@@ -249,3 +249,7 @@ dist-ssr
 # Uploaded dynamic surveillance videos
 uploads/*
 !uploads/.gitkeep
+
+# Machine Learning weights
+*.pt
+
