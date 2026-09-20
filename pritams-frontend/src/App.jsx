@@ -3,6 +3,84 @@ import "./App.css";
 import Register from "./pages/register";
 import Login from "./pages/login";
 
+// Web Audio API Tactical Alert Beep Synthesizer
+let globalAudioCtx = null;
+
+const getOrCreateAudioContext = () => {
+  try {
+    if (!globalAudioCtx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        globalAudioCtx = new AudioCtx();
+      }
+    }
+    if (globalAudioCtx && globalAudioCtx.state === "suspended") {
+      globalAudioCtx.resume().catch(() => {});
+    }
+  } catch (e) {
+    console.warn("[Netra AI Audio] AudioContext init warning:", e);
+  }
+  return globalAudioCtx;
+};
+
+/**
+ * Plays a high-priority tactical warning beep sequence on the device.
+ * Pattern: 3 rapid pulsing beeps:
+ * 1. 880 Hz (0.12s)
+ * 2. 880 Hz (0.12s)
+ * 3. 1200 Hz (0.22s, elevated urgency warning tone)
+ * Uses native Web Audio API with smooth gain envelope to avoid speaker pops/clicks.
+ */
+const playTacticalBeep = () => {
+  try {
+    const ctx = getOrCreateAudioContext();
+    if (!ctx) return false;
+
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+
+    const now = ctx.currentTime;
+    const tones = [
+      { freq: 880, start: now + 0.02, duration: 0.12 },
+      { freq: 880, start: now + 0.18, duration: 0.12 },
+      { freq: 1200, start: now + 0.36, duration: 0.22 },
+    ];
+
+    tones.forEach(({ freq, start, duration }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, start);
+
+      const end = start + duration;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.35, start + 0.015);
+      gain.gain.setValueAtTime(0.35, end - 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, end);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(start);
+      osc.stop(end + 0.02);
+
+      setTimeout(() => {
+        try {
+          osc.disconnect();
+          gain.disconnect();
+        } catch (_) {}
+      }, (end - now + 0.1) * 1000);
+    });
+
+    return true;
+  } catch (err) {
+    console.warn("[Netra AI Audio] playTacticalBeep warning:", err);
+    return false;
+  }
+};
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -104,6 +182,88 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [militaryTime, setMilitaryTime] = useState("");
 
+  // Tactical Audio Intrusion Alerts
+  const [audioAlertsEnabled, setAudioAlertsEnabled] = useState(true);
+  const [isBeeping, setIsBeeping] = useState(false);
+  const audioAlertsEnabledRef = useRef(true);
+  audioAlertsEnabledRef.current = audioAlertsEnabled;
+  const lastBeepTimeRef = useRef(0);
+  const beepTimeoutRef = useRef(null);
+  const lastAlertIdRef = useRef(null);
+  const activeCameraIdRef = useRef(null);
+  activeCameraIdRef.current = activeCameraId;
+  const camerasRef = useRef([]);
+  camerasRef.current = cameras;
+
+  // Unlock browser Web Audio API on initial user interaction
+  useEffect(() => {
+    const handleUserGesture = () => {
+      getOrCreateAudioContext();
+    };
+    window.addEventListener("click", handleUserGesture, { once: true });
+    window.addEventListener("keydown", handleUserGesture, { once: true });
+    window.addEventListener("touchstart", handleUserGesture, { once: true });
+    return () => {
+      window.removeEventListener("click", handleUserGesture);
+      window.removeEventListener("keydown", handleUserGesture);
+      window.removeEventListener("touchstart", handleUserGesture);
+    };
+  }, []);
+
+  // Helper to determine if an alert belongs to the camera currently being watched
+  const isAlertForMonitoredCamera = (alert, camId, camList) => {
+    if (!alert) return false;
+    const activeCam = (camList || camerasRef.current).find((c) => c.id === camId) || (camList || camerasRef.current)[0] || null;
+    if (!activeCam || !activeCam.id) return true;
+
+    const activeIdStr = activeCam.id.toString().trim();
+    const activeUpper = `CAM-${activeIdStr}`.toUpperCase();
+    const activeName = (activeCam.cameraName || "").toLowerCase().trim();
+    const spatialName = (alert.spatial_coordinates?.camera_name || "").toLowerCase().trim();
+
+    const alertCid = (alert.camera_id || "").toString().trim();
+    const alertCidUpper = alertCid.toUpperCase();
+    const alertCidNum = alertCid.replace(/^CAM-/i, "").trim();
+
+    return (
+      alertCid === activeIdStr ||
+      alertCidUpper === activeUpper ||
+      alertCidNum === activeIdStr ||
+      (activeName && (alertCid.toLowerCase() === activeName || spatialName === activeName))
+    );
+  };
+
+  // Trigger Tactical Alert Beep on Intrusion
+  const triggerIntrusionBeep = (force = false) => {
+    if (!audioAlertsEnabledRef.current && !force) return;
+
+    const now = Date.now();
+    // Cooldown between beep sequences: at least 2.5s to let the 3-beep burst complete cleanly
+    if (!force && now - lastBeepTimeRef.current < 2500) {
+      return;
+    }
+    lastBeepTimeRef.current = now;
+
+    setIsBeeping(true);
+    playTacticalBeep();
+
+    if (beepTimeoutRef.current) clearTimeout(beepTimeoutRef.current);
+    beepTimeoutRef.current = setTimeout(() => {
+      setIsBeeping(false);
+    }, 1200);
+  };
+
+  const handleTestBeep = (e) => {
+    if (e) e.stopPropagation();
+    getOrCreateAudioContext();
+    triggerIntrusionBeep(true);
+  };
+
+  const toggleAudioAlerts = () => {
+    getOrCreateAudioContext();
+    setAudioAlertsEnabled((prev) => !prev);
+  };
+
   // Add Camera Modal
   const [showAddCameraModal, setShowAddCameraModal] = useState(false);
   const [ingestMode, setIngestMode] = useState("video"); // "video" | "stream"
@@ -182,6 +342,24 @@ function App() {
               setFps(frameCountRef.current);
               frameCountRef.current = 0;
               lastTimeRef.current = now;
+            }
+          } else if (typeof event.data === "string") {
+            try {
+              const msg = JSON.parse(event.data);
+              if (msg.type === "INTRUSION_ALERT" && msg.alert) {
+                const incomingAlert = msg.alert;
+                setAlerts((prev) => {
+                  if (prev.some((a) => a.alert_id === incomingAlert.alert_id)) return prev;
+                  return [incomingAlert, ...prev];
+                });
+
+                // If alert is an intrusion on the video feed currently watched, give alert in form of beeps!
+                if (isAlertForMonitoredCamera(incomingAlert, activeCameraIdRef.current, camerasRef.current)) {
+                  triggerIntrusionBeep();
+                }
+              }
+            } catch (err) {
+              // Ignore non-JSON or malformed messages
             }
           }
         };
@@ -314,6 +492,22 @@ function App() {
               );
             });
             setAlerts(userOnlyAlerts);
+
+            // Check if any recent intrusion alert belongs to the camera currently being watched
+            const monitoredAlerts = userOnlyAlerts.filter((a) =>
+              isAlertForMonitoredCamera(a, activeCameraId, userCams)
+            );
+            if (monitoredAlerts.length > 0) {
+              const latestAlert = monitoredAlerts[0];
+              const isRecent = latestAlert.event_timestamp
+                ? Date.now() - new Date(latestAlert.event_timestamp).getTime() < 12000
+                : true;
+
+              if (latestAlert.alert_id !== lastAlertIdRef.current && isRecent) {
+                lastAlertIdRef.current = latestAlert.alert_id;
+                triggerIntrusionBeep();
+              }
+            }
           }
         }
       }
@@ -743,6 +937,19 @@ function App() {
               <span className="clock-value">{militaryTime}</span>
             </div>
 
+            {/* Audio Alert Status Pill */}
+            <button
+              type="button"
+              className={`tactical-audio-chip ${isBeeping ? "beeping" : audioAlertsEnabled ? "armed" : "muted"}`}
+              onClick={toggleAudioAlerts}
+              title={audioAlertsEnabled ? "Audio alerts are ARMED on this device. Click to mute." : "Audio alerts are MUTED. Click to un-mute."}
+            >
+              <span className="audio-icon">{isBeeping ? "🚨" : audioAlertsEnabled ? "🔊" : "🔇"}</span>
+              <span className="audio-label">
+                {isBeeping ? "INTRUSION BEEPING" : audioAlertsEnabled ? "AUDIO ALERTS ON" : "AUDIO MUTED"}
+              </span>
+            </button>
+
             {/* Top-Right Officer Profile Component with Rank & Sign Out */}
             <div className="operator-chip">
               <div className="avatar-chip">🎖️</div>
@@ -871,6 +1078,11 @@ function App() {
                   </div>
 
                   <div className="hud-right">
+                    {isBeeping && (
+                      <span className="hud-beep-alert-tag pulsing-beep">
+                        🚨 INTRUSION DETECTED • BEEPING
+                      </span>
+                    )}
                     <span className="hud-stat">1280x720</span>
                     <span className="hud-stat">YOLOv8n-Mil</span>
                     <span className="hud-stat">FPS: {fps > 0 ? fps : 30}</span>
@@ -898,7 +1110,7 @@ function App() {
                     <div className="video-placeholder-tactical">
                       <div className="radar-spinner"></div>
                       <div className="placeholder-status-title">
-                        STANDBY • NO RTSP FEED LINKED
+                         STANDBY • NO RTSP FEED LINKED
                       </div>
                       <div className="placeholder-sub">
                         Link an RTSP surveillance stream or test video to initialize live computer vision.
@@ -925,7 +1137,23 @@ function App() {
                       • AUTOMATED EMAIL NOTIFIER: {userProfile.email}
                     </span>
                   </div>
-                  <div className="hud-footer-right">
+                  <div className="hud-footer-right" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <button
+                      type="button"
+                      className={`btn-hud btn-audio-toggle ${audioAlertsEnabled ? "audio-on" : "audio-off"}`}
+                      onClick={toggleAudioAlerts}
+                      title={audioAlertsEnabled ? "Mute device beeps" : "Unmute device beeps"}
+                    >
+                      {audioAlertsEnabled ? "🔊 Audio: Armed" : "🔇 Audio: Muted"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-hud btn-test-beep"
+                      onClick={handleTestBeep}
+                      title="Test device speakers with sample alert beep"
+                    >
+                      ⚡ Test Beep
+                    </button>
                     <button
                       type="button"
                       className="btn-hud"

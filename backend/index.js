@@ -55,6 +55,20 @@ const broadcastFrame = (frameBuffer) => {
   }
 };
 
+export const broadcastAlert = (alertData) => {
+  try {
+    const payload = JSON.stringify({ type: "INTRUSION_ALERT", alert: alertData });
+    for (const client of streamClients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    }
+  } catch (err) {
+    console.warn("[Netra AI WebSocket] Alert broadcast notice:", err.message);
+  }
+};
+app.set("broadcastAlert", broadcastAlert);
+
 // -------------------------------------------------------------
 // 2. High-Performance Frame Ingestion from Python AI Pipeline
 // -------------------------------------------------------------

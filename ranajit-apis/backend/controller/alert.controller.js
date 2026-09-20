@@ -90,10 +90,21 @@ export const createAlertController = async (req, res) => {
     ];
 
     const result = await pool.query(query, values);
+    const createdAlert = result.rows[0];
+
+    // Broadcast real-time intrusion alert to connected dashboard stream clients
+    try {
+      const broadcaster = req.app?.get("broadcastAlert");
+      if (typeof broadcaster === "function") {
+        broadcaster(createdAlert);
+      }
+    } catch (bErr) {
+      console.warn("Notice broadcasting alert to stream:", bErr.message);
+    }
 
     res.status(201).json({
       message: "Intrusion alert created successfully",
-      alert: result.rows[0],
+      alert: createdAlert,
     });
   } catch (error) {
     console.error("Error in createAlertController:", error.message);

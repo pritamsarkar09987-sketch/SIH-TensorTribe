@@ -288,6 +288,19 @@ class DetectionPipeline:
                         track_id = list(self.intrusion_detector._tracks_inside)[0] if self.intrusion_detector._tracks_inside else 1
                         threading.Thread(target=self._post_db_alert, args=(track_id, frame_copy), daemon=True).start()
 
+                        # Non-blocking host audio alert beep (Windows host)
+                        def _host_audio_beep():
+                            try:
+                                import winsound
+                                winsound.Beep(900, 120)
+                                time.sleep(0.06)
+                                winsound.Beep(900, 120)
+                                time.sleep(0.06)
+                                winsound.Beep(1200, 200)
+                            except Exception:
+                                pass
+                        threading.Thread(target=_host_audio_beep, daemon=True).start()
+
                     # Trigger Cooldown Email Notification (debounce 45s)
                     if now - self._last_email_time >= self.email_cooldown_seconds:
                         self._last_email_time = now
