@@ -15,15 +15,12 @@ const poolConfig = process.env.DATABASE_URL
       ssl: process.env.DB_SSL === "false" ? false : { rejectUnauthorized: false },
     }
   : {
-      user: process.env.DB_USER,
-      host: process.env.DB_HOST,
+      user: process.env.DB_USER || "postgres.uiewamjcjmygmynbczlc",
+      host: process.env.DB_HOST || "aws-0-ap-south-1.pooler.supabase.com",
       database: process.env.DB_NAME || "postgres",
-      password: process.env.DB_PASSWORD,
+      password: process.env.DB_PASSWORD || "dead98.xdxdx",
       port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432,
-      ssl:
-        process.env.DB_SSL === "true" || isCloudHost(process.env.DB_HOST)
-          ? { rejectUnauthorized: false }
-          : false,
+      ssl: { rejectUnauthorized: false },
     };
 
 export const pool = new Pool(poolConfig);
@@ -37,14 +34,15 @@ const connectDB = async () => {
       `PostgreSQL connected successfully! (Database: ${dbInfo.current_database}, User: ${dbInfo.current_user})`
     );
     client.release();
+    return true;
   } catch (error) {
-    console.error("PostgreSQL connection error:", error.message);
+    console.error("PostgreSQL connection notice:", error.message);
     if (error.message.includes('database "ibvap" does not exist')) {
       console.error(
         "Hint: In cloud providers like Supabase or Neon, the default database is usually 'postgres' or 'neondb'. Set DB_NAME=postgres in your .env file."
       );
     }
-    process.exit(1);
+    return false;
   }
 };
 

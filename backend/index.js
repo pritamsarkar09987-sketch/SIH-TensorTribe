@@ -135,33 +135,46 @@ app.use(express.static(frontendDistPath));
 
 app.use((req, res, next) => {
   if (req.method === "GET" && !req.path.startsWith("/api/")) {
-    return res.sendFile(path.join(frontendDistPath, "index.html"), (err) => {
-      if (err) {
-        res.status(200).send(`
-          <html>
-            <body style="background:#0c121e;color:#fff;font-family:sans-serif;padding:2rem;">
-              <h2>Netra AI Tactical Command Monolith Online</h2>
-              <p>API and WebSocket stream are active on port ${port}.</p>
-              <p>Please run <code>npm run build</code> in the root folder or pritams-frontend to compile the static UI bundle.</p>
-            </body>
-          </html>
-        `);
-      }
-    });
+    const indexPath = path.join(frontendDistPath, "index.html");
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath);
+    }
+    return res.status(200).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Netra AI Tactical Monolith</title></head>
+        <body style="background:#0c121e;color:#fff;font-family:sans-serif;padding:2rem;text-align:center;">
+          <h2>🛡️ Netra AI Tactical Command Monolith Online</h2>
+          <p>API and WebSocket stream are active on port ${port}.</p>
+          <p style="color:#94a3b8;">Static UI bundle is not built yet. Please run <code>npm run build</code>.</p>
+        </body>
+      </html>
+    `);
   }
   return res.status(404).json({ error: "Endpoint not found" });
+});
+
+// Global Error Handler to prevent silent 500 crashes
+app.use((err, req, res, next) => {
+  console.error("[Netra AI Express Error]:", err);
+  if (!res.headersSent) {
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: err.message || "An unexpected error occurred",
+    });
+  }
 });
 
 // -------------------------------------------------------------
 // 5. Server Startup
 // -------------------------------------------------------------
-server.listen(port, async () => {
+server.listen(port, "0.0.0.0", async () => {
   await connectDB();
   console.log(`\n==========================================================`);
   console.log(` Netra AI Consolidated Tactical Platform Online!`);
-  console.log(` - Single Entry Point:   http://localhost:${port}`);
-  console.log(` - REST API Base:        http://localhost:${port}/api`);
-  console.log(` - WebSocket Feed:       ws://localhost:${port}/stream`);
-  console.log(` - Frame Ingest Target:  http://localhost:${port}/ingest`);
+  console.log(` - Single Entry Point:   http://0.0.0.0:${port}`);
+  console.log(` - REST API Base:        http://0.0.0.0:${port}/api`);
+  console.log(` - WebSocket Feed:       ws://0.0.0.0:${port}/stream`);
+  console.log(` - Frame Ingest Target:  http://0.0.0.0:${port}/ingest`);
   console.log(`==========================================================\n`);
 });
